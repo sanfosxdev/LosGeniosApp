@@ -1,27 +1,13 @@
-import { GoogleGenAI, Chat, Content } from "@google/genai";
-// Fix: Use getProductsFromCache instead of getProducts
 import { getProductsFromCache } from './productService';
-// Fix: Use getScheduleFromCache instead of getSchedule
 import { isBusinessOpen, getScheduleFromCache } from './scheduleService';
 import { getReservationSettings, getReservationsFromCache } from './reservationService';
-// Fix: Use getTablesFromCache instead of getTables
 import { getTablesFromCache } from './tableService';
 import type { TimeSlot, ChatMessage } from '../types';
 import { MessageSender } from '../types';
 import { getOrdersFromCache, isOrderFinished } from './orderService';
 import { OrderType, ReservationStatus } from '../types';
 
-const API_KEY = process.env.API_KEY;
-
-if (!API_KEY) {
-  console.warn("API_KEY is not set. The application will not work.");
-}
-
-const ai = new GoogleGenAI({ apiKey: API_KEY! });
-
-
 const generateMenuForPrompt = (): string => {
-    // Fix: Use getProductsFromCache instead of getProducts
     const products = getProductsFromCache();
     const groupedMenu = products.reduce((acc, product) => {
         const { category, name, price, description } = product;
@@ -40,7 +26,6 @@ const generateMenuForPrompt = (): string => {
 };
 
 const formatScheduleForPrompt = (): string => {
-    // Fix: Use getScheduleFromCache instead of getSchedule
     const schedule = getScheduleFromCache();
     const days = ['lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado', 'domingo'];
     const dayKeys = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
@@ -57,7 +42,6 @@ const formatScheduleForPrompt = (): string => {
 };
 
 const generateTablesForPrompt = (): string => {
-    // Fix: Use getTablesFromCache instead of getTables
     const tables = getTablesFromCache();
     const reservableTables = tables.filter(t => t.allowsReservations);
     if (reservableTables.length === 0) {
@@ -362,43 +346,62 @@ Comienza la conversación saludando amablemente, informando que el local está c
     }
 }
 
-export const createChatSession = (history: ChatMessage[] = [], actionLock: 'order' | 'reservation' | null = null): Chat => {
-  const formattedHistory: Content[] = history
-    .filter(msg => msg.text && !msg.text.match(/```json\s*([\s\S]*?)\s*```/)) // Filter out JSON responses from history
-    .map(msg => ({
-        role: msg.sender === MessageSender.USER ? 'user' : 'model',
-        parts: [{ text: msg.text }],
-    }));
+export interface CustomChat {
+    sendMessage: (params: { message: string }) => Promise<{ text: string }>;
+}
 
-  return ai.chats.create({
-    model: 'gemini-2.5-flash',
-    history: formattedHistory,
-    config: {
-      systemInstruction: getSystemInstruction(actionLock),
-    },
-  });
+export const createChatSession = (history: ChatMessage[] = [], actionLock: 'order' | 'reservation' | null = null): CustomChat => {
+  
+  const sendMessage = async (params: { message: string }): Promise<{ text: string }> => {
+    const fullHistory = [...history, { sender: MessageSender.USER, text: params.message }];
+    
+    const formattedHistory = fullHistory
+      .filter(msg => msg.text && !msg.text.match(/```json\s*([\s\S]*?)\s*```/))
+      .map(msg => ({
+          role: msg.sender === MessageSender.USER ? 'user' : 'model',
+          parts: [{ text: msg.text }],
+      }));
+
+    const systemInstruction = getSystemInstruction(actionLock);
+
+    const response = await fetch('/.netlify/functions/gemini', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+            history: formattedHistory, 
+            systemInstruction: systemInstruction 
+        }),
+    });
+
+    if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ error: 'Server error' }));
+        throw new Error(errorData.error || 'Failed to get response from assistant.');
+    }
+
+    return response.json();
+  };
+
+  return { sendMessage };
 };
+
 
 export const transcribeAudio = async (base64Audio: string, mimeType: string): Promise<string> => {
     try {
-        const audioPart = {
-            inlineData: {
-                mimeType: mimeType,
-                data: base64Audio,
-            },
-        };
-        const textPart = {
-            text: "Transcribe este audio. Responde únicamente con el texto transcrito, sin ningún comentario adicional o frases como 'Aquí está la transcripción'."
-        };
-
-        const response = await ai.models.generateContent({
-            model: 'gemini-2.5-flash',
-            contents: { parts: [audioPart, textPart] },
+        const response = await fetch('/.netlify/functions/transcribe', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ audio: base64Audio, mimeType: mimeType }),
         });
 
-        return response.text.trim();
+        if (!response.ok) {
+            const errorData = await response.json().catch(() => ({ error: 'Server error' }));
+            throw new Error(errorData.error || "Failed to transcribe audio.");
+        }
+
+        const data = await response.json();
+        return data.text.trim();
     } catch (error) {
-        console.error("Error transcribing audio:", error);
+        console.error("Error transcribing audio via serverless function:", error);
         throw new Error("Failed to transcribe audio.");
     }
 };

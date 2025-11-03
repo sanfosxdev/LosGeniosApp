@@ -8,8 +8,7 @@ import { MicrophoneIcon } from './icons/MicrophoneIcon';
 import { UploadCloudIcon } from './icons/UploadCloudIcon';
 import type { ChatMessage } from '../types';
 import { MessageSender, CreatedBy } from '../types';
-import { createChatSession, transcribeAudio } from '../services/geminiService';
-import type { Chat } from '@google/genai';
+import { createChatSession, transcribeAudio, type CustomChat } from '../services/geminiService';
 import { saveOrder } from '../services/orderService';
 import { addReservation, findAvailableTables, getAvailability } from '../services/reservationService';
 import { isBusinessOpen } from '../services/scheduleService';
@@ -34,7 +33,7 @@ const ChatAssistantModal: React.FC<ChatAssistantModalProps> = ({ isOpen, onClose
   const [actionLock, setActionLock] = useState<'order' | 'reservation' | null>(null);
   const [isSessionCompleted, setIsSessionCompleted] = useState(false);
   
-  const chatRef = useRef<Chat | null>(null);
+  const chatRef = useRef<CustomChat | null>(null);
   const sessionRef = useRef<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -188,8 +187,8 @@ const ChatAssistantModal: React.FC<ChatAssistantModalProps> = ({ isOpen, onClose
         }
         if(newActionLock) {
             setActionLock(newActionLock);
-            const currentHistory = [...messages, userMessage];
-            chatRef.current = createChatSession(currentHistory, newActionLock);
+            // Re-create chat session with the lock for the new system prompt
+            chatRef.current = createChatSession([...messages, userMessage], newActionLock);
         }
     }
     
@@ -277,9 +276,10 @@ const ChatAssistantModal: React.FC<ChatAssistantModalProps> = ({ isOpen, onClose
       }
     } catch (error) {
       console.error("Error sending message:", error);
-      const errorMessage: ChatMessage = { sender: MessageSender.BOT, text: "¡Vaya! Algo salió mal. Por favor, inténtalo de nuevo." };
+      const errorMessageText = error instanceof Error ? error.message : "¡Vaya! Algo salió mal. Por favor, inténtalo de nuevo.";
+      const errorMessage: ChatMessage = { sender: MessageSender.BOT, text: errorMessageText };
       setMessages(prev => [...prev, errorMessage]);
-      sliceBotMetricsService.logMessage(sessionId, errorMessage);
+      if(sessionRef.current) sliceBotMetricsService.logMessage(sessionRef.current, errorMessage);
       setIsLoading(false);
     }
   }, [messages, actionLock, handleActionSuccess, resetChat, isSessionCompleted]);
