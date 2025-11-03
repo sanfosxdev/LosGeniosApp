@@ -1,8 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import type { Order, Table, Product, Category, Promotion, OrderItem } from '../types';
-// Fix: Import PaymentMethod to use it as a default value for new dine-in orders.
 import { OrderType, CreatedBy, OrderStatus, PaymentMethod } from '../types';
-// Fix: Import fetchAndCacheTables to ensure table data is up-to-date.
 import { getEnrichedTableById, getTablesFromCache, fetchAndCacheTables } from '../services/tableService';
 import { getOrdersFromCache, saveOrder, updateOrder, updateOrderStatus, fetchAndCacheOrders } from '../services/orderService';
 import { getReservationsFromCache, fetchAndCacheReservations } from '../services/reservationService';
@@ -27,8 +25,8 @@ const TableOrderView: React.FC<{ tableId: string }> = ({ tableId }) => {
     useEffect(() => {
         const initialize = async () => {
             try {
-                // Fetch all data first to ensure caches are populated and up-to-date
-                const [products, categories, promotions, _tables, _orders, _reservations] = await Promise.all([
+                // Step 1: Fetch all data to ensure caches are fresh
+                const [products, categories, promotions] = await Promise.all([
                     fetchAndCacheProducts(),
                     fetchAndCacheCategories(),
                     fetchAndCachePromotions(),
@@ -38,57 +36,62 @@ const TableOrderView: React.FC<{ tableId: string }> = ({ tableId }) => {
                 ]);
                 setMenu({ products, promotions: promotions.filter(p => p.isActive), categories });
 
+                // Step 2: Find the table
                 const tableInfo = getTablesFromCache().find(t => t.id === tableId);
-
                 if (!tableInfo) {
-                    setErrorMessage(`Mesa con ID "${tableId}" no encontrada.`);
-                    setStatus('error');
-                    return;
+                    throw new Error(`Mesa con ID "${tableId}" no encontrada.`);
                 }
                 setTable(tableInfo);
 
+                // Step 3: Check for an existing order session
                 const sessionOrderKey = `pizzeria-table-order-${tableId}`;
                 const sessionOrderId = sessionStorage.getItem(sessionOrderKey);
                 
-                let currentOrder: Order | undefined;
-                if(sessionOrderId) {
-                    // getOrdersFromCache() is now up-to-date
-                    currentOrder = getOrdersFromCache().find(o => o.id === sessionOrderId);
-                    if (!currentOrder || currentOrder.status !== OrderStatus.PENDING) {
-                        currentOrder = undefined;
+                if (sessionOrderId) {
+                    const existingOrder = getOrdersFromCache().find(o => o.id === sessionOrderId);
+                    // Check if the order is still valid for this session
+                    if (existingOrder && existingOrder.status === OrderStatus.PENDING) {
+                        setOrder(existingOrder);
+                        setStatus('ready');
+                        return; // Initialization complete
+                    } else {
+                        // The session is stale, remove it and proceed
                         sessionStorage.removeItem(sessionOrderKey);
                     }
                 }
+                
+                // Step 4: If no session, check table status and create a new order if free
+                const enrichedTable = getEnrichedTableById(tableId);
+                
+                if (!enrichedTable) {
+                    // This is a safeguard; it shouldn't happen if tableInfo exists.
+                    throw new Error('No se pudieron obtener los detalles completos de la mesa.');
+                }
 
-                if (currentOrder) {
-                    setOrder(currentOrder);
+                if (enrichedTable.status === 'Libre') {
+                    const newOrder = await saveOrder({
+                        customer: { name: `Mesa ${tableInfo.name}` },
+                        items: [],
+                        total: 0,
+                        type: OrderType.DINE_IN,
+                        tableIds: [tableId],
+                        guests: 1,
+                        createdBy: CreatedBy.WEB_ASSISTANT,
+                        paymentMethod: PaymentMethod.CASH,
+                    });
+                    sessionStorage.setItem(sessionOrderKey, newOrder.id);
+                    setOrder(newOrder);
                     setStatus('ready');
                 } else {
-                    // getEnrichedTableById() will now work correctly
-                    const enrichedTable = getEnrichedTableById(tableId);
-                    if (enrichedTable?.status === 'Libre') {
-                        const newOrder = await saveOrder({
-                            customer: { name: `Mesa ${tableInfo.name}` },
-                            items: [],
-                            total: 0,
-                            type: OrderType.DINE_IN,
-                            tableIds: [tableId],
-                            guests: 1, // Default guests, can be adjusted later if needed
-                            createdBy: CreatedBy.WEB_ASSISTANT,
-                            paymentMethod: PaymentMethod.CASH,
-                        });
-                        sessionStorage.setItem(sessionOrderKey, newOrder.id);
-                        setOrder(newOrder);
-                        setStatus('ready');
-                    } else {
-                        // This is now safe because enrichedTable will not be null if tableInfo was found.
-                        setErrorMessage(`Esta mesa está actualmente ${enrichedTable?.status.toLowerCase()}. Por favor, consulta con un miembro del personal.`);
-                        setStatus('occupied');
-                    }
+                    // Table is not free
+                    setErrorMessage(`Esta mesa está actualmente ${enrichedTable.status.toLowerCase()}. Por favor, consulta con un miembro del personal.`);
+                    setStatus('occupied');
                 }
+
             } catch (err) {
-                console.error(err);
-                setErrorMessage('Ocurrió un error al cargar la información. Por favor, intenta de nuevo.');
+                console.error("Error during table order initialization:", err);
+                const message = err instanceof Error ? err.message : 'Ocurrió un error al cargar la información.';
+                setErrorMessage(message);
                 setStatus('error');
             }
         };
@@ -101,13 +104,16 @@ const TableOrderView: React.FC<{ tableId: string }> = ({ tableId }) => {
         const newTotal = newItems.reduce((sum, item) => sum + item.price * item.quantity, 0);
         const updatedOrder = { ...order, items: newItems, total: newTotal };
         setOrder(updatedOrder);
+        // Also save to sheet in background to persist cart across devices if needed (optional)
+        updateOrder(updatedOrder).catch(err => console.error("Failed to sync cart changes:", err));
     };
 
     const handleConfirmOrder = async () => {
         if (!order || order.items.length === 0) return;
         try {
             setStatus('loading');
-            await updateOrder({ ...order, status: OrderStatus.CONFIRMED });
+            // Final update before confirming status
+            await updateOrder(order); 
             await updateOrderStatus(order.id, OrderStatus.CONFIRMED);
             const sessionOrderKey = `pizzeria-table-order-${tableId}`;
             sessionStorage.removeItem(sessionOrderKey);
@@ -176,9 +182,13 @@ const TableOrderView: React.FC<{ tableId: string }> = ({ tableId }) => {
             grouped[prod.category].push(prod);
         });
 
-        return categories
-            .map(cat => ({ name: cat.name, items: grouped[cat.name] || [] }))
+        // Ensure Promotions is always first if it exists
+        const categoryOrder = ['Promociones', ...categories.map(c => c.name).filter(name => name !== 'Promociones')];
+
+        return categoryOrder
+            .map(name => ({ name, items: grouped[name] || [] }))
             .filter(cat => cat.items.length > 0);
+
     }, [products, promotions, categories]);
 
 
@@ -228,7 +238,7 @@ const TableOrderView: React.FC<{ tableId: string }> = ({ tableId }) => {
                             </h2>
                             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                                 {items.map(item => (
-                                    <div key={item.id} className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-4 flex flex-col justify-between">
+                                    <div key={item.id} className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-4 flex flex-col justify-between transition-transform hover:scale-105">
                                         <div>
                                             <div className="flex justify-between items-start mb-2">
                                                 <h3 className="text-lg font-semibold pr-2">{item.name}</h3>
