@@ -140,9 +140,7 @@ export const sendWhatsAppMessage = async (number: string, content: string, media
     }
 
     const body: any = {
-        // Fix based on API error: Expects a single object, not an array.
         messages: messageObject,
-        // Fix based on API error: Ensure number is always a string.
         number: String(number),
         checkIfExists: false,
     };
@@ -193,9 +191,7 @@ export const sendWhatsAppGroupMessage = async (groupId: string, content: string,
     }
 
     const body: any = {
-        // Fix based on API error: Expects a single object, not an array.
         messages: messageObject,
-        // Fix based on API error: Ensure groupId is always a string.
         number: String(groupId),
         checkIfExists: false,
     };

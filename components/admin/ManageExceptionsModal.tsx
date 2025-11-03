@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import type { ScheduleException, TimeSlot } from '../../types';
 import { ExceptionType } from '../../types';
-// Fix: Use getScheduleExceptionsFromCache instead of getScheduleExceptions
 import { getScheduleExceptionsFromCache as getScheduleExceptions, addScheduleException, updateScheduleException, deleteScheduleException } from '../../services/scheduleExceptionService';
 import { CloseIcon } from '../icons/CloseIcon';
 import { EditIcon } from '../icons/EditIcon';

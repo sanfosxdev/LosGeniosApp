@@ -37,8 +37,6 @@ const AddEditTableModal: React.FC<AddEditTableModalProps> = ({ isOpen, onClose, 
       alert('Por favor, ingresa un nombre válido y una capacidad mayor a 0.');
       return;
     }
-    // Fix: Added missing 'overrideStatus' property to conform to the Table type.
-    // This preserves the existing status on edit and defaults to null for new tables.
     onSave({
       id: tableToEdit?.id,
       name,

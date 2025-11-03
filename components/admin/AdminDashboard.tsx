@@ -1,5 +1,3 @@
-
-
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import AdminSidebar from './AdminSidebar';
 import OrdersPanel from './OrdersPanel';
@@ -23,6 +21,7 @@ import { fetchAndCacheCustomerCategories } from '../../services/customerCategory
 import { fetchAndCacheCustomers } from '../../services/customerService';
 import { fetchAndCacheTables } from '../../services/tableService';
 import { fetchAndCacheScheduleExceptions } from '../../services/scheduleExceptionService';
+import { fetchAndCacheSchedule } from '../../services/scheduleService';
 import { fetchAndCacheSliceBotData } from '../../services/sliceBotMetricsService';
 import { fetchAndCacheWhatsAppBotData } from '../../services/whatsappBotMetricsService';
 import { syncLocalDataToSheet } from '../../services/settingsService';
@@ -32,6 +31,8 @@ import type { Notification, WhatsAppBotStatus, BulkSendJob } from '../../types';
 import type { SliceBotStatus } from '../../services/sliceBotService';
 import { ReservationStatus } from '../../types';
 import { CloseIcon } from '../icons/CloseIcon';
+import { ToastContainer } from './ToastContainer';
+import { toastService } from '../../services/toastService';
 
 
 interface AdminDashboardProps {
@@ -40,6 +41,15 @@ interface AdminDashboardProps {
 }
 
 type AdminPanel = 'orders' | 'products' | 'customers' | 'schedule' | 'reservations' | 'tables' | 'bots' | 'settings';
+
+const FullPageLoader: React.FC = () => (
+    <div className="flex h-screen w-screen justify-center items-center bg-gray-50 dark:bg-gray-900">
+        <div className="text-center">
+            <PizzaIcon className="w-16 h-16 text-primary mx-auto animate-bounce" />
+            <p className="text-lg font-semibold mt-4 text-gray-700 dark:text-gray-200">Cargando datos del local...</p>
+        </div>
+    </div>
+);
 
 const AdminDashboard: React.FC<AdminDashboardProps> = ({ onGoToSite, onSliceBotStatusChange }) => {
   const [activePanel, setActivePanel] = useState<AdminPanel>('orders');
@@ -51,6 +61,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onGoToSite, onSliceBotS
   const [lastStatusCheck, setLastStatusCheck] = useState<Date | null>(null);
   const [bulkSendJob, setBulkSendJob] = useState<BulkSendJob | null>(null);
   const [dataTimestamp, setDataTimestamp] = useState(Date.now());
+  const [isInitialLoading, setIsInitialLoading] = useState(true);
   const lastCheckedOrder = useRef<string | null>(null);
   
   // Sync State
@@ -144,6 +155,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onGoToSite, onSliceBotS
             fetchAndCacheSliceBotData(),
             fetchAndCacheWhatsAppBotData(),
             fetchAndCacheReservationSettings(),
+            fetchAndCacheSchedule(),
         ]);
         if (isMounted) {
             setDataTimestamp(Date.now());
@@ -151,7 +163,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onGoToSite, onSliceBotS
         }
     } catch (error) {
         console.warn("Data polling failed:", error);
-        throw error;
+        toastService.show('Error al actualizar datos desde la nube.', 'error');
     }
     
     return () => { isMounted = false; };
@@ -165,12 +177,14 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onGoToSite, onSliceBotS
       await pollDataAndCheckSystem();
       setLastSyncTime(new Date());
       setSyncStatus('success');
+      toastService.show('Sincronización manual completada.', 'success');
       setTimeout(() => setSyncStatus('idle'), 2500);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Ocurrió un error desconocido.';
       console.error("Manual sync failed:", error);
       setSyncStatus('error');
       setSyncError(`Error de sincronización: ${message}`);
+      toastService.show(`Error de sincronización: ${message}`, 'error');
       setTimeout(() => setSyncStatus('idle'), 5000);
     }
   };
@@ -179,15 +193,23 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onGoToSite, onSliceBotS
   useEffect(() => {
     let isMounted = true;
     const initialLoad = async () => {
-        await pollDataAndCheckSystem();
-        if (isMounted) {
-            const initialOrders = getOrdersFromCache();
-            if (initialOrders.length > 0) {
-                lastCheckedOrder.current = initialOrders[0].id;
+        try {
+            await pollDataAndCheckSystem();
+            if (isMounted) {
+                const initialOrders = getOrdersFromCache();
+                if (initialOrders.length > 0) {
+                    lastCheckedOrder.current = initialOrders[0].id;
+                }
+                setLastSyncTime(new Date());
             }
-            setLastSyncTime(new Date());
+            checkWhatsAppStatus(true);
+        } catch (error) {
+            console.error("Failed to perform initial data load:", error);
+        } finally {
+            if (isMounted) {
+                setIsInitialLoading(false);
+            }
         }
-        checkWhatsAppStatus(true);
     };
 
     initialLoad();
@@ -281,9 +303,14 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onGoToSite, onSliceBotS
         return <OrdersPanel onRefreshNotifications={refreshNotifications} dataTimestamp={dataTimestamp} />;
     }
   };
+  
+  if (isInitialLoading) {
+    return <FullPageLoader />;
+  }
 
   return (
     <div className="flex h-screen bg-gray-50 dark:bg-gray-900 font-sans">
+      <ToastContainer />
       <AdminSidebar 
         activePanel={activePanel} 
         onPanelChange={(panel) => setActivePanel(panel)} 

@@ -1,13 +1,9 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import type { Order, OrderItem, Product, Table, Customer, Reservation, Promotion } from '../../types';
 import { OrderType, PaymentMethod } from '../../types';
-// Fix: Use getProductsFromCache instead of getProducts
 import { getProductsFromCache as getProducts } from '../../services/productService';
-// Fix: Use getPromotionsFromCache instead of getPromotions
 import { getPromotionsFromCache as getPromotions } from '../../services/promotionService';
-// Fix: Use getTablesFromCache instead of getTables
 import { getTablesFromCache as getTables, getAvailableTablesForDineIn } from '../../services/tableService';
-// Fix: Use getCustomersFromCache instead of getCustomers
 import { getCustomersFromCache as getCustomers } from '../../services/customerService';
 import { CloseIcon } from '../icons/CloseIcon';
 import { PlusIcon } from '../icons/PlusIcon';

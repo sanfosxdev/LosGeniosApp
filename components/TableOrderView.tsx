@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import type { Order, Table, Product, Category, Promotion, OrderItem } from '../types';
 import { OrderType, CreatedBy, OrderStatus, PaymentMethod } from '../types';
 import { getEnrichedTableById, getTablesFromCache, fetchAndCacheTables } from '../services/tableService';
@@ -9,13 +9,12 @@ import { fetchAndCacheCategories } from '../services/categoryService';
 import { fetchAndCachePromotions } from '../services/promotionService';
 
 import { PizzaIcon } from './icons/PizzaIcon';
-import { Spinner } from './admin/Spinner';
 import OrderCart from './table_order/OrderCart';
 
-type LoadingStatus = 'loading' | 'ready' | 'occupied' | 'error' | 'ordered';
+type ViewStatus = 'loading' | 'welcome' | 'ready' | 'occupied' | 'error' | 'ordered';
 
 const TableOrderView: React.FC<{ tableId: string }> = ({ tableId }) => {
-    const [status, setStatus] = useState<LoadingStatus>('loading');
+    const [viewStatus, setViewStatus] = useState<ViewStatus>('loading');
     const [table, setTable] = useState<Table | null>(null);
     const [order, setOrder] = useState<Order | null>(null);
     const [menu, setMenu] = useState<{ products: Product[], promotions: Promotion[], categories: Category[] }>({ products: [], promotions: [], categories: [] });
@@ -49,147 +48,109 @@ const TableOrderView: React.FC<{ tableId: string }> = ({ tableId }) => {
                 
                 if (sessionOrderId) {
                     const existingOrder = getOrdersFromCache().find(o => o.id === sessionOrderId);
-                    // Check if the order is still valid for this session
                     if (existingOrder && existingOrder.status === OrderStatus.PENDING) {
                         setOrder(existingOrder);
-                        setStatus('ready');
+                        setViewStatus('ready');
                         return; // Initialization complete
                     } else {
-                        // The session is stale, remove it and proceed
                         sessionStorage.removeItem(sessionOrderKey);
                     }
                 }
                 
-                // Step 4: If no session, check table status and create a new order if free
+                // Step 4: If no session, check table status
                 const enrichedTable = getEnrichedTableById(tableId);
                 
                 if (!enrichedTable) {
-                    // This is a safeguard; it shouldn't happen if tableInfo exists.
                     throw new Error('No se pudieron obtener los detalles completos de la mesa.');
                 }
 
                 if (enrichedTable.status === 'Libre') {
-                    const newOrder = await saveOrder({
-                        customer: { name: `Mesa ${tableInfo.name}` },
-                        items: [],
-                        total: 0,
-                        type: OrderType.DINE_IN,
-                        tableIds: [tableId],
-                        guests: 1,
-                        createdBy: CreatedBy.WEB_ASSISTANT,
-                        paymentMethod: PaymentMethod.CASH,
-                    });
-                    sessionStorage.setItem(sessionOrderKey, newOrder.id);
-                    setOrder(newOrder);
-                    setStatus('ready');
+                    setViewStatus('welcome');
                 } else {
-                    // Table is not free
                     setErrorMessage(`Esta mesa está actualmente ${enrichedTable.status.toLowerCase()}. Por favor, consulta con un miembro del personal.`);
-                    setStatus('occupied');
+                    setViewStatus('occupied');
                 }
 
             } catch (err) {
                 console.error("Error during table order initialization:", err);
                 const message = err instanceof Error ? err.message : 'Ocurrió un error al cargar la información.';
                 setErrorMessage(message);
-                setStatus('error');
+                setViewStatus('error');
             }
         };
 
         initialize();
     }, [tableId]);
+    
+    const handleStartOrder = useCallback(async () => {
+        if (!table) return;
+        setViewStatus('loading');
+        try {
+            const newOrder = await saveOrder({
+                customer: { name: `Mesa ${table.name}` },
+                items: [],
+                total: 0,
+                type: OrderType.DINE_IN,
+                tableIds: [table.id],
+                guests: 1, // Default guests, can be adjusted later if needed
+                createdBy: CreatedBy.WEB_ASSISTANT,
+                paymentMethod: PaymentMethod.CASH,
+            });
+            const sessionOrderKey = `pizzeria-table-order-${table.id}`;
+            sessionStorage.setItem(sessionOrderKey, newOrder.id);
+            setOrder(newOrder);
+            setViewStatus('ready');
+        } catch (err) {
+            console.error("Error creating order:", err);
+            setErrorMessage("No se pudo iniciar el pedido. Por favor, intenta de nuevo.");
+            setViewStatus('error');
+        }
+    }, [table]);
 
     const handleUpdateOrder = (newItems: OrderItem[]) => {
         if (!order) return;
         const newTotal = newItems.reduce((sum, item) => sum + item.price * item.quantity, 0);
         const updatedOrder = { ...order, items: newItems, total: newTotal };
         setOrder(updatedOrder);
-        // Also save to sheet in background to persist cart across devices if needed (optional)
         updateOrder(updatedOrder).catch(err => console.error("Failed to sync cart changes:", err));
     };
 
     const handleConfirmOrder = async () => {
         if (!order || order.items.length === 0) return;
         try {
-            setStatus('loading');
-            // Final update before confirming status
+            setViewStatus('loading');
             await updateOrder(order); 
             await updateOrderStatus(order.id, OrderStatus.CONFIRMED);
             const sessionOrderKey = `pizzeria-table-order-${tableId}`;
             sessionStorage.removeItem(sessionOrderKey);
-            setStatus('ordered');
+            setViewStatus('ordered');
         } catch (err) {
             console.error(err);
             setErrorMessage('Hubo un problema al confirmar tu pedido. Por favor, avisa al personal.');
-            setStatus('error');
+            setViewStatus('error');
         }
     };
-
-
-    if (status === 'loading') {
-        return (
-            <div className="flex h-screen w-screen justify-center items-center bg-gray-50 dark:bg-gray-900">
-                <div className="text-center">
-                    <PizzaIcon className="w-16 h-16 text-primary mx-auto animate-bounce" />
-                    <p className="text-lg font-semibold mt-4 text-gray-700 dark:text-gray-200">
-                        Preparando tu mesa digital...
-                    </p>
-                </div>
-            </div>
-        );
-    }
     
-    if (status === 'error' || status === 'occupied') {
-         return (
-            <div className="flex h-screen w-screen justify-center items-center bg-gray-50 dark:bg-gray-900 p-4">
-                <div className="text-center bg-white dark:bg-gray-800 p-8 rounded-lg shadow-lg">
-                    <PizzaIcon className="w-16 h-16 text-primary mx-auto mb-4" />
-                    <h1 className="text-2xl font-bold text-dark dark:text-light mb-2">Pizzería Los Genios</h1>
-                    <p className="text-lg text-red-600 dark:text-red-400">{errorMessage}</p>
-                </div>
-            </div>
-        );
-    }
-
-    if (status === 'ordered') {
-        return (
-            <div className="flex h-screen w-screen justify-center items-center bg-gray-50 dark:bg-gray-900 p-4">
-                <div className="text-center bg-white dark:bg-gray-800 p-8 rounded-lg shadow-lg max-w-md">
-                    <PizzaIcon className="w-16 h-16 text-primary mx-auto mb-4" />
-                    <h1 className="text-2xl font-bold text-dark dark:text-light mb-2">¡Pedido enviado!</h1>
-                    <p className="text-gray-600 dark:text-gray-300">
-                        Tu pedido ha sido enviado a la cocina. Si necesitas agregar más productos, por favor avisa a nuestro personal.
-                    </p>
-                    <p className="text-gray-600 dark:text-gray-300 mt-2">
-                        ¡Buen provecho!
-                    </p>
-                </div>
-            </div>
-        );
-    }
-
-    const { products, promotions, categories } = menu;
     const menuItemsByCategory = useMemo(() => {
         const grouped: { [key: string]: (Product | Promotion)[] } = {};
         
-        promotions.forEach(promo => {
+        menu.promotions.forEach(promo => {
             if (!grouped['Promociones']) grouped['Promociones'] = [];
             grouped['Promociones'].push(promo);
         });
         
-        products.forEach(prod => {
+        menu.products.forEach(prod => {
             if (!grouped[prod.category]) grouped[prod.category] = [];
             grouped[prod.category].push(prod);
         });
 
-        // Ensure Promotions is always first if it exists
-        const categoryOrder = ['Promociones', ...categories.map(c => c.name).filter(name => name !== 'Promociones')];
+        const categoryOrder = ['Promociones', ...menu.categories.map(c => c.name).filter(name => name !== 'Promociones')];
 
         return categoryOrder
             .map(name => ({ name, items: grouped[name] || [] }))
             .filter(cat => cat.items.length > 0);
 
-    }, [products, promotions, categories]);
+    }, [menu.products, menu.promotions, menu.categories]);
 
 
     const addItemToOrder = (item: Product | Promotion) => {
@@ -216,6 +177,69 @@ const TableOrderView: React.FC<{ tableId: string }> = ({ tableId }) => {
             }];
         }
         handleUpdateOrder(newItems);
+    }
+
+
+    if (viewStatus === 'loading') {
+        return (
+            <div className="flex h-screen w-screen justify-center items-center bg-gray-50 dark:bg-gray-900">
+                <div className="text-center">
+                    <PizzaIcon className="w-16 h-16 text-primary mx-auto animate-bounce" />
+                    <p className="text-lg font-semibold mt-4 text-gray-700 dark:text-gray-200">
+                        Preparando tu mesa digital...
+                    </p>
+                </div>
+            </div>
+        );
+    }
+    
+    if (viewStatus === 'error' || viewStatus === 'occupied') {
+         return (
+            <div className="flex h-screen w-screen justify-center items-center bg-gray-50 dark:bg-gray-900 p-4">
+                <div className="text-center bg-white dark:bg-gray-800 p-8 rounded-lg shadow-lg">
+                    <PizzaIcon className="w-16 h-16 text-primary mx-auto mb-4" />
+                    <h1 className="text-2xl font-bold text-dark dark:text-light mb-2">Pizzería Los Genios</h1>
+                    <p className="text-lg text-red-600 dark:text-red-400">{errorMessage}</p>
+                </div>
+            </div>
+        );
+    }
+    
+    if (viewStatus === 'welcome') {
+        return (
+             <div className="flex h-screen w-screen justify-center items-center bg-gray-50 dark:bg-gray-900 p-4">
+                <div className="text-center bg-white dark:bg-gray-800 p-8 rounded-lg shadow-lg max-w-md animate-fade-in">
+                    <PizzaIcon className="w-16 h-16 text-primary mx-auto mb-4" />
+                    <h1 className="text-2xl font-bold text-dark dark:text-light mb-2">¡Bienvenido a la Mesa {table?.name}!</h1>
+                    <p className="text-gray-600 dark:text-gray-300 mb-6">
+                        Estás a punto de empezar tu pedido. Presiona el botón para ver nuestro menú.
+                    </p>
+                     <button
+                        onClick={handleStartOrder}
+                        className="w-full bg-primary text-white font-bold py-3 px-6 rounded-lg hover:bg-red-700 transition-transform duration-300 ease-in-out transform hover:scale-105"
+                    >
+                        Hacer un Pedido
+                    </button>
+                </div>
+            </div>
+        );
+    }
+
+    if (viewStatus === 'ordered') {
+        return (
+            <div className="flex h-screen w-screen justify-center items-center bg-gray-50 dark:bg-gray-900 p-4">
+                <div className="text-center bg-white dark:bg-gray-800 p-8 rounded-lg shadow-lg max-w-md">
+                    <PizzaIcon className="w-16 h-16 text-primary mx-auto mb-4" />
+                    <h1 className="text-2xl font-bold text-dark dark:text-light mb-2">¡Pedido enviado!</h1>
+                    <p className="text-gray-600 dark:text-gray-300">
+                        Tu pedido ha sido enviado a la cocina. Si necesitas agregar más productos, por favor avisa a nuestro personal.
+                    </p>
+                    <p className="text-gray-600 dark:text-gray-300 mt-2">
+                        ¡Buen provecho!
+                    </p>
+                </div>
+            </div>
+        );
     }
 
     return (

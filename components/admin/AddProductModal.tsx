@@ -2,7 +2,6 @@
 
 import React, { useState, useEffect } from 'react';
 import type { Product, Category } from '../../types';
-// Fix: Use getCategoriesFromCache instead of getCategories
 import { getCategoriesFromCache as getCategories } from '../../services/categoryService';
 import { CloseIcon } from '../icons/CloseIcon';
 

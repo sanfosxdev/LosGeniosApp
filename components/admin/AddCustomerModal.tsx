@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
 import type { Customer, CustomerCategory } from '../../types';
-// Fix: Use getCustomerCategoriesFromCache instead of getCustomerCategories
 import { getCustomerCategoriesFromCache as getCustomerCategories } from '../../services/customerCategoryService';
 import { CloseIcon } from '../icons/CloseIcon';
 
