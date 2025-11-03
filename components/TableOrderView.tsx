@@ -119,8 +119,18 @@ const TableOrderView: React.FC<{ tableId: string }> = ({ tableId }) => {
         if (!order || order.items.length === 0) return;
         try {
             setViewStatus('loading');
-            await updateOrder(order); 
-            await updateOrderStatus(order.id, OrderStatus.CONFIRMED);
+            
+            // Atomically update the entire order object.
+            // We are manually adding the status history entry that updateOrderStatus would have added.
+            const confirmedOrder = {
+                ...order, // Contains latest items and total
+                status: OrderStatus.CONFIRMED,
+                statusHistory: [ ...order.statusHistory, { status: OrderStatus.CONFIRMED, startedAt: new Date().toISOString() } ]
+            };
+
+            // updateOrder will merge this with the cached version and save everything.
+            await updateOrder(confirmedOrder);
+            
             const sessionOrderKey = `pizzeria-table-order-${tableId}`;
             sessionStorage.removeItem(sessionOrderKey);
             setViewStatus('ordered');
