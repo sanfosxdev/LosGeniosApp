@@ -4,8 +4,8 @@ import type { Order, Table, Product, Category, Promotion, OrderItem } from '../t
 import { OrderType, CreatedBy, OrderStatus, PaymentMethod } from '../types';
 // Fix: Import fetchAndCacheTables to ensure table data is up-to-date.
 import { getEnrichedTableById, getTablesFromCache, fetchAndCacheTables } from '../services/tableService';
-import { getOrdersFromCache, saveOrder, updateOrder, updateOrderStatus } from '../services/orderService';
-import { getReservationsFromCache } from '../services/reservationService';
+import { getOrdersFromCache, saveOrder, updateOrder, updateOrderStatus, fetchAndCacheOrders } from '../services/orderService';
+import { getReservationsFromCache, fetchAndCacheReservations } from '../services/reservationService';
 import { fetchAndCacheProducts } from '../services/productService';
 import { fetchAndCacheCategories } from '../services/categoryService';
 import { fetchAndCachePromotions } from '../services/promotionService';
@@ -27,22 +27,18 @@ const TableOrderView: React.FC<{ tableId: string }> = ({ tableId }) => {
     useEffect(() => {
         const initialize = async () => {
             try {
-                // Fetch all data first
-                const [products, categories, promotions] = await Promise.all([
+                // Fetch all data first to ensure caches are populated and up-to-date
+                const [products, categories, promotions, _tables, _orders, _reservations] = await Promise.all([
                     fetchAndCacheProducts(),
                     fetchAndCacheCategories(),
-                    fetchAndCachePromotions()
+                    fetchAndCachePromotions(),
+                    fetchAndCacheTables(),
+                    fetchAndCacheOrders(),
+                    fetchAndCacheReservations()
                 ]);
                 setMenu({ products, promotions: promotions.filter(p => p.isActive), categories });
 
-                // Try finding the table in the cache first.
-                let tableInfo = getTablesFromCache().find(t => t.id === tableId);
-
-                // If not found, fetch from the source and try again.
-                if (!tableInfo) {
-                    await fetchAndCacheTables(); // This will update the cache.
-                    tableInfo = getTablesFromCache().find(t => t.id === tableId); // Try again.
-                }
+                const tableInfo = getTablesFromCache().find(t => t.id === tableId);
 
                 if (!tableInfo) {
                     setErrorMessage(`Mesa con ID "${tableId}" no encontrada.`);
@@ -56,6 +52,7 @@ const TableOrderView: React.FC<{ tableId: string }> = ({ tableId }) => {
                 
                 let currentOrder: Order | undefined;
                 if(sessionOrderId) {
+                    // getOrdersFromCache() is now up-to-date
                     currentOrder = getOrdersFromCache().find(o => o.id === sessionOrderId);
                     if (!currentOrder || currentOrder.status !== OrderStatus.PENDING) {
                         currentOrder = undefined;
@@ -67,6 +64,7 @@ const TableOrderView: React.FC<{ tableId: string }> = ({ tableId }) => {
                     setOrder(currentOrder);
                     setStatus('ready');
                 } else {
+                    // getEnrichedTableById() will now work correctly
                     const enrichedTable = getEnrichedTableById(tableId);
                     if (enrichedTable?.status === 'Libre') {
                         const newOrder = await saveOrder({
@@ -77,14 +75,13 @@ const TableOrderView: React.FC<{ tableId: string }> = ({ tableId }) => {
                             tableIds: [tableId],
                             guests: 1, // Default guests, can be adjusted later if needed
                             createdBy: CreatedBy.WEB_ASSISTANT,
-                            // Fix: Corrected the type mismatch by setting a default PaymentMethod.
-                            // The payment method for dine-in is usually determined at the end, so CASH is a sensible default.
                             paymentMethod: PaymentMethod.CASH,
                         });
                         sessionStorage.setItem(sessionOrderKey, newOrder.id);
                         setOrder(newOrder);
                         setStatus('ready');
                     } else {
+                        // This is now safe because enrichedTable will not be null if tableInfo was found.
                         setErrorMessage(`Esta mesa está actualmente ${enrichedTable?.status.toLowerCase()}. Por favor, consulta con un miembro del personal.`);
                         setStatus('occupied');
                     }
