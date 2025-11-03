@@ -7,6 +7,7 @@ import { getReservationsFromCache, fetchAndCacheReservations } from '../services
 import { fetchAndCacheProducts } from '../services/productService';
 import { fetchAndCacheCategories } from '../services/categoryService';
 import { fetchAndCachePromotions } from '../services/promotionService';
+import { addNotification } from '../services/notificationService';
 
 import { PizzaIcon } from './icons/PizzaIcon';
 import OrderCart from './table_order/OrderCart';
@@ -120,17 +121,23 @@ const TableOrderView: React.FC<{ tableId: string }> = ({ tableId }) => {
         try {
             setViewStatus('loading');
             
-            // Atomically update the entire order object.
-            // We are manually adding the status history entry that updateOrderStatus would have added.
             const confirmedOrder = {
-                ...order, // Contains latest items and total
+                ...order,
                 status: OrderStatus.CONFIRMED,
                 statusHistory: [ ...order.statusHistory, { status: OrderStatus.CONFIRMED, startedAt: new Date().toISOString() } ]
             };
 
-            // updateOrder will merge this with the cached version and save everything.
             await updateOrder(confirmedOrder);
             
+            // Notify admin panel of the new order
+            addNotification({
+                message: `Nuevo pedido en ${confirmedOrder.customer.name} por $${confirmedOrder.total.toLocaleString('es-AR')}.`,
+                type: 'order',
+                relatedId: confirmedOrder.id,
+            });
+            // Trigger a storage event to force other tabs (like the admin dashboard) to refresh
+            localStorage.setItem('pizzeria-data-updated', Date.now().toString());
+
             const sessionOrderKey = `pizzeria-table-order-${tableId}`;
             sessionStorage.removeItem(sessionOrderKey);
             setViewStatus('ordered');

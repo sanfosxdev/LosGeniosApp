@@ -10,29 +10,29 @@ import BotsPanel from './admin/BotsPanel';
 import SettingsPanel from './admin/SettingsPanel';
 import { MenuIcon } from './icons/MenuIcon';
 import { PizzaIcon } from './icons/PizzaIcon';
-import * as notificationService from '../services/notificationService';
-import * as whatsAppBotService from '../services/whatsappBotService';
-import { fetchAndCacheOrders, getOrdersFromCache } from '../services/orderService';
-import { fetchAndCacheReservations, getReservationsFromCache, fetchAndCacheReservationSettings } from '../services/reservationService';
-import { fetchAndCacheProducts } from '../services/productService';
-import { fetchAndCacheCategories } from '../services/categoryService';
-import { fetchAndCachePromotions } from '../services/promotionService';
-import { fetchAndCacheCustomerCategories } from '../services/customerCategoryService';
-import { fetchAndCacheCustomers } from '../services/customerService';
-import { fetchAndCacheTables } from '../services/tableService';
-import { fetchAndCacheScheduleExceptions } from '../services/scheduleExceptionService';
-import { fetchAndCacheSchedule } from '../services/scheduleService';
-import { fetchAndCacheSliceBotData } from '../services/sliceBotMetricsService';
-import { fetchAndCacheWhatsAppBotData } from '../services/whatsappBotMetricsService';
-import { syncLocalDataToSheet } from '../services/settingsService';
+import * as notificationService from '../../services/notificationService';
+import * as whatsAppBotService from '../../services/whatsappBotService';
+import { fetchAndCacheOrders, getOrdersFromCache } from '../../services/orderService';
+import { fetchAndCacheReservations, getReservationsFromCache, fetchAndCacheReservationSettings } from '../../services/reservationService';
+import { fetchAndCacheProducts } from '../../services/productService';
+import { fetchAndCacheCategories } from '../../services/categoryService';
+import { fetchAndCachePromotions } from '../../services/promotionService';
+import { fetchAndCacheCustomerCategories } from '../../services/customerCategoryService';
+import { fetchAndCacheCustomers } from '../../services/customerService';
+import { fetchAndCacheTables } from '../../services/tableService';
+import { fetchAndCacheScheduleExceptions } from '../../services/scheduleExceptionService';
+import { fetchAndCacheSchedule } from '../../services/scheduleService';
+import { fetchAndCacheSliceBotData } from '../../services/sliceBotMetricsService';
+import { fetchAndCacheWhatsAppBotData } from '../../services/whatsappBotMetricsService';
+import { syncLocalDataToSheet } from '../../services/settingsService';
 import NotificationCenter from './admin/NotificationCenter';
 import SyncButton from './admin/SyncButton';
-import type { Notification, WhatsAppBotStatus, BulkSendJob } from '../types';
-import type { SliceBotStatus } from '../services/sliceBotService';
-import { ReservationStatus } from '../types';
+import type { Notification, WhatsAppBotStatus, BulkSendJob } from '../../types';
+import type { SliceBotStatus } from '../../services/sliceBotService';
+import { ReservationStatus } from '../../types';
 import { CloseIcon } from './icons/CloseIcon';
 import { ToastContainer } from './admin/ToastContainer';
-import { toastService } from '../services/toastService';
+import { toastService } from '../../services/toastService';
 
 
 interface AdminDashboardProps {
@@ -155,7 +155,6 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onGoToSite, onSliceBotS
             fetchAndCacheSliceBotData(),
             fetchAndCacheWhatsAppBotData(),
             fetchAndCacheReservationSettings(),
-// Fix: Added missing fetchAndCacheSchedule call to ensure schedule data is refreshed.
             fetchAndCacheSchedule(),
         ]);
         if (isMounted) {
@@ -194,7 +193,6 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onGoToSite, onSliceBotS
   useEffect(() => {
     let isMounted = true;
     const initialLoad = async () => {
-// Fix: Wrapped initial data load in a try-catch block to prevent the dashboard from crashing if the API call fails on startup.
         try {
             await pollDataAndCheckSystem();
             if (isMounted) {
@@ -207,7 +205,6 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onGoToSite, onSliceBotS
             checkWhatsAppStatus(true);
         } catch (error) {
             console.error("Failed to perform initial data load:", error);
-            // Even if it fails, we should stop showing the loader
         } finally {
             if (isMounted) {
                 setIsInitialLoading(false);
@@ -232,6 +229,22 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onGoToSite, onSliceBotS
     };
   }, [activePanel, whatsAppStatus, checkWhatsAppStatus, pollDataAndCheckSystem]);
   
+  useEffect(() => {
+    const handleStorageUpdate = (event: StorageEvent) => {
+        // When 'pizzeria-data-updated' is set in another tab, refresh data.
+        if (event.key === 'pizzeria-data-updated') {
+            toastService.show('Nuevos datos disponibles. Actualizando...', 'info');
+            pollDataAndCheckSystem();
+        }
+    };
+
+    window.addEventListener('storage', handleStorageUpdate);
+
+    return () => {
+        window.removeEventListener('storage', handleStorageUpdate);
+    };
+  }, [pollDataAndCheckSystem]);
+
   const unreadCount = notifications.filter(n => !n.isRead).length;
 
   const handleMarkAsRead = (id: string) => {
@@ -307,7 +320,6 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onGoToSite, onSliceBotS
     }
   };
   
-// Fix: Added the initial loading screen logic back, which was missing from the component's return statement.
   if (isInitialLoading) {
     return <FullPageLoader />;
   }
