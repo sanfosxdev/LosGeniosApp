@@ -2,14 +2,14 @@ import type { Table, EnrichedTable, Order, Reservation } from '../types';
 import { OrderType, ReservationStatus } from '../types';
 import { getOrdersFromCache, isOrderFinished } from './orderService';
 import { getReservationsFromCache } from './reservationService';
-import apiService from './apiService';
+import { db, collection, getDocs, doc, setDoc, deleteDoc, writeBatch } from './firebase';
 
 const TABLES_STORAGE_KEY = 'pizzeria-tables';
 const SHEET_NAME = 'Tables';
 
 let tablesCache: Table[] | null = null;
 
-const updateCaches = (tables: Table[]) => {
+export const updateCaches = (tables: Table[]) => {
     tablesCache = tables.sort((a,b) => a.name.localeCompare(b.name));
     localStorage.setItem(TABLES_STORAGE_KEY, JSON.stringify(tablesCache));
 };
@@ -49,11 +49,25 @@ export const getTablesFromCache = (): Table[] => {
 
 export const fetchAndCacheTables = async (): Promise<Table[]> => {
     try {
-        const tables = await apiService.get(SHEET_NAME);
+        const querySnapshot = await getDocs(collection(db, SHEET_NAME));
+        
+        if (querySnapshot.empty && getTablesFromCache().length > 0) {
+            console.log(`Firebase collection '${SHEET_NAME}' is empty. Seeding from local storage.`);
+            const localData = getTablesFromCache();
+            const batch = writeBatch(db);
+            localData.forEach(item => {
+                const docRef = doc(db, SHEET_NAME, item.id);
+                batch.set(docRef, item);
+            });
+            await batch.commit();
+            return localData;
+        }
+
+        const tables = querySnapshot.docs.map(doc => doc.data() as Table);
         updateCaches(tables);
         return tables;
     } catch(e) {
-        console.warn("Could not fetch tables, using local cache.", e);
+        console.warn("Could not fetch tables from Firebase, using local cache.", e);
         return getTablesFromCache();
     }
 };
@@ -64,10 +78,10 @@ export const addTable = async (tableData: Omit<Table, 'id'>): Promise<Table> => 
     id: `TBL-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
     overrideStatus: null
   };
-  updateCaches([...getTablesFromCache(), newTable]);
-  
+
   try {
-    await apiService.post('addData', { sheetName: SHEET_NAME, item: newTable });
+    await setDoc(doc(db, SHEET_NAME, newTable.id), newTable);
+    updateCaches([...getTablesFromCache(), newTable]);
     return newTable;
   } catch (e) {
     throw new Error(`Failed to save table: ${e instanceof Error ? e.message : String(e)}`);
@@ -75,16 +89,15 @@ export const addTable = async (tableData: Omit<Table, 'id'>): Promise<Table> => 
 };
 
 export const updateTable = async (updatedTable: Table): Promise<Table> => {
-  const tables = getTablesFromCache();
-  const tableIndex = tables.findIndex(t => t.id === updatedTable.id);
-  if (tableIndex === -1) throw new Error("Table not found");
-
-  const newCache = [...tables];
-  newCache[tableIndex] = updatedTable;
-  updateCaches(newCache);
-  
   try {
-    await apiService.post('updateData', { sheetName: SHEET_NAME, item: updatedTable });
+    await setDoc(doc(db, SHEET_NAME, updatedTable.id), updatedTable);
+    const tables = getTablesFromCache();
+    const tableIndex = tables.findIndex(t => t.id === updatedTable.id);
+    if (tableIndex !== -1) {
+        const newCache = [...tables];
+        newCache[tableIndex] = updatedTable;
+        updateCaches(newCache);
+    }
     return updatedTable;
   } catch (e) {
     throw new Error(`Failed to update table: ${e instanceof Error ? e.message : String(e)}`);
@@ -101,10 +114,9 @@ export const setTableOverrideStatus = async (tableId: string, status: 'Bloqueada
 };
 
 export const deleteTable = async (tableId: string): Promise<void> => {
-  updateCaches(getTablesFromCache().filter(t => t.id !== tableId));
-  
   try {
-    await apiService.post('deleteData', { sheetName: SHEET_NAME, itemId: tableId });
+    await deleteDoc(doc(db, SHEET_NAME, tableId));
+    updateCaches(getTablesFromCache().filter(t => t.id !== tableId));
   } catch (e) {
     throw new Error(`Failed to delete table: ${e instanceof Error ? e.message : String(e)}`);
   }

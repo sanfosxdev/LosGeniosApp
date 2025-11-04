@@ -1,13 +1,13 @@
 import type { Customer } from '../types';
 import { getCustomerCategoriesFromCache, getDefaultNewCustomerCategory } from './customerCategoryService';
-import apiService from './apiService';
+import { db, collection, getDocs, doc, setDoc, deleteDoc, writeBatch, query, where } from './firebase';
 
 const CUSTOMERS_STORAGE_KEY = 'pizzeria-customers';
 const SHEET_NAME = 'Customers';
 
 let customersCache: Customer[] | null = null;
 
-const updateCaches = (customers: Customer[]) => {
+export const updateCaches = (customers: Customer[]) => {
     customersCache = customers.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
     localStorage.setItem(CUSTOMERS_STORAGE_KEY, JSON.stringify(customersCache));
 };
@@ -35,19 +35,21 @@ export const getCustomersFromCache = (): Customer[] => {
 
 export const fetchAndCacheCustomers = async (): Promise<Customer[]> => {
     try {
-        const customers = await apiService.get(SHEET_NAME);
-        // Data migration for customers without a category
-        const categories = getCustomerCategoriesFromCache();
-        const defaultCategory = getDefaultNewCustomerCategory();
-        const defaultCategoryId = defaultCategory ? defaultCategory.id : 'default-nuevo';
-        const categoryIds = new Set(categories.map(c => c.id));
+        const querySnapshot = await getDocs(collection(db, SHEET_NAME));
         
-        customers.forEach((customer: any) => {
-            if (!customer.categoryId || !categoryIds.has(customer.categoryId)) {
-                customer.categoryId = defaultCategoryId;
-            }
-        });
-        
+        if (querySnapshot.empty && getCustomersFromCache().length > 0) {
+            console.log(`Firebase collection '${SHEET_NAME}' is empty. Seeding from local storage.`);
+            const localData = getCustomersFromCache();
+            const batch = writeBatch(db);
+            localData.forEach(item => {
+                const docRef = doc(db, SHEET_NAME, item.id);
+                batch.set(docRef, item);
+            });
+            await batch.commit();
+            return localData;
+        }
+
+        const customers = querySnapshot.docs.map(doc => doc.data() as Customer);
         updateCaches(customers);
         return customers;
     } catch (error) {
@@ -76,10 +78,9 @@ export const addCustomer = async (customerData: Omit<Customer, 'id' | 'createdAt
     categoryId: customerData.categoryId || (defaultCategory ? defaultCategory.id : 'default-nuevo'),
   };
 
-  updateCaches([newCustomer, ...existingCustomers]);
-
   try {
-      await apiService.post('addData', { sheetName: SHEET_NAME, item: newCustomer });
+      await setDoc(doc(db, SHEET_NAME, newCustomer.id), newCustomer);
+      updateCaches([newCustomer, ...existingCustomers]);
       return newCustomer;
   } catch (e) {
       throw new Error(`Error al guardar cliente en la nube: ${e instanceof Error ? e.message : String(e)}`);
@@ -99,12 +100,11 @@ export const updateCustomer = async (updatedCustomer: Customer): Promise<Custome
   const customerIndex = customers.findIndex(c => c.id === updatedCustomer.id);
   if (customerIndex === -1) throw new Error("Customer not found");
   
-  const newCache = [...customers];
-  newCache[customerIndex] = { ...updatedCustomer, phone, email };
-  updateCaches(newCache);
-
   try {
-    await apiService.post('updateData', { sheetName: SHEET_NAME, item: newCache[customerIndex] });
+    await setDoc(doc(db, SHEET_NAME, updatedCustomer.id), { ...updatedCustomer, phone, email });
+    const newCache = [...customers];
+    newCache[customerIndex] = { ...updatedCustomer, phone, email };
+    updateCaches(newCache);
     return newCache[customerIndex];
   } catch (e) {
      throw new Error(`Error al actualizar cliente en la nube: ${e instanceof Error ? e.message : String(e)}`);
@@ -112,84 +112,91 @@ export const updateCustomer = async (updatedCustomer: Customer): Promise<Custome
 };
 
 export const deleteCustomer = async (customerId: string): Promise<void> => {
-  const newCache = getCustomersFromCache().filter(c => c.id !== customerId);
-  updateCaches(newCache);
-  
   try {
-      await apiService.post('deleteData', { sheetName: SHEET_NAME, itemId: customerId });
+      await deleteDoc(doc(db, SHEET_NAME, customerId));
+      const newCache = getCustomersFromCache().filter(c => c.id !== customerId);
+      updateCaches(newCache);
   } catch (e) {
       throw new Error(`Error al eliminar cliente en la nube: ${e instanceof Error ? e.message : String(e)}`);
   }
 };
 
 export const reassignCustomersFromCategory = async (deletedCategoryId: string) => {
-    const customers = getCustomersFromCache();
     const defaultCategory = getDefaultNewCustomerCategory();
     if (!defaultCategory) return;
 
-    let updated = false;
-    const updatedCustomers = customers.map(c => {
-        if(c.categoryId === deletedCategoryId) {
-            updated = true;
-            return {...c, categoryId: defaultCategory.id};
-        }
-        return c;
-    });
+    try {
+        const q = query(collection(db, SHEET_NAME), where("categoryId", "==", deletedCategoryId));
+        const querySnapshot = await getDocs(q);
+        if (querySnapshot.empty) return;
 
-    if (updated) {
+        const batch = writeBatch(db);
+        querySnapshot.forEach(customerDoc => {
+            const docRef = doc(db, SHEET_NAME, customerDoc.id);
+            batch.update(docRef, { categoryId: defaultCategory.id });
+        });
+        await batch.commit();
+
+        // Also update local cache for immediate UI feedback
+        const customers = getCustomersFromCache();
+        const updatedCustomers = customers.map(c => {
+            if (c.categoryId === deletedCategoryId) {
+                return {...c, categoryId: defaultCategory.id};
+            }
+            return c;
+        });
         updateCaches(updatedCustomers);
-        try {
-            const headers = ['id', 'name', 'phone', 'email', 'address', 'createdAt', 'categoryId'];
-            await apiService.post('syncDataType', { sheetName: SHEET_NAME, items: updatedCustomers, headers });
-        } catch(e) {
-            console.error("Failed to sync customer reassignments", e);
-            // The change is already local, so it will be fixed on next full sync.
-        }
+
+    } catch(e) {
+        console.error("Failed to reassign customers in Firebase", e);
+        throw new Error(`Failed to reassign customers: ${e instanceof Error ? e.message : String(e)}`);
     }
 };
 
-export const importCustomers = (
-  customersToImport: any[]
-): { added: number; updated: number; errors: number } => {
-  const existingCustomers = getCustomersFromCache();
-  const categories = getCustomerCategoriesFromCache();
-  const defaultCategory = getDefaultNewCustomerCategory();
+export const importCustomers = async (customersToImport: any[]): Promise<{ added: number; updated: number; errors: number }> => {
   let added = 0;
   let updated = 0;
   let errors = 0;
 
+  const categories = getCustomerCategoriesFromCache();
+  const defaultCategory = getDefaultNewCustomerCategory();
   const categoryMap = new Map<string, string>();
   categories.forEach(c => categoryMap.set(c.name.toLowerCase(), c.id));
 
-  customersToImport.forEach(newCust => {
+  const batch = writeBatch(db);
+  const localCustomers = getCustomersFromCache();
+
+  for (const newCust of customersToImport) {
     if (!newCust.name || !newCust.name.trim() || !newCust.phone || !newCust.email) {
-      errors++; return;
+      errors++; continue;
     }
     const categoryId = categoryMap.get(newCust.categoryName?.trim().toLowerCase() || '') || defaultCategory?.id;
-    if (!categoryId) { errors++; return; }
+    if (!categoryId) { errors++; continue; }
     
     const phone = newCust.phone?.trim() || '';
     const email = newCust.email?.trim().toLowerCase() || '';
 
-    if (!/^\d{10,}$/.test(phone.replace(/\D/g, ''))) { errors++; return; }
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { errors++; return; }
+    if (!/^\d{10,}$/.test(phone.replace(/\D/g, ''))) { errors++; continue; }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { errors++; continue; }
 
     const customerData = { name: newCust.name.trim(), phone, email, address: newCust.address?.trim() || '', categoryId };
-    const existingCustomerIndex = existingCustomers.findIndex(c => c.phone === phone || c.email === email);
+    const existingCustomer = localCustomers.find(c => c.phone === phone || c.email === email);
     
-    if (existingCustomerIndex > -1) {
-      existingCustomers[existingCustomerIndex] = { ...existingCustomers[existingCustomerIndex], ...customerData };
+    if (existingCustomer) {
+      const docRef = doc(db, SHEET_NAME, existingCustomer.id);
+      batch.set(docRef, { ...existingCustomer, ...customerData });
       updated++;
     } else {
-      const newCustomer: Customer = { ...customerData, id: `CUST-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`, createdAt: new Date().toISOString() };
-      existingCustomers.push(newCustomer);
+      const newId = `CUST-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+      const newCustomer: Customer = { ...customerData, id: newId, createdAt: new Date().toISOString() };
+      const docRef = doc(db, SHEET_NAME, newId);
+      batch.set(docRef, newCustomer);
       added++;
     }
-  });
+  }
   
-  updateCaches(existingCustomers);
-  const headers = ['id', 'name', 'phone', 'email', 'address', 'createdAt', 'categoryId'];
-  apiService.post('syncDataType', { sheetName: SHEET_NAME, items: existingCustomers, headers }).catch(e => console.error("Error syncing imported customers:", e));
+  await batch.commit();
+  await fetchAndCacheCustomers(); // Refresh local cache from source of truth
   
   return { added, updated, errors };
 };

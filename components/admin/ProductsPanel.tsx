@@ -118,26 +118,26 @@ const ProductsPanel: React.FC<ProductsPanelProps> = ({ dataTimestamp }) => {
     setIsPromotionsModalOpen(false);
   };
 
-  const handleSaveProduct = (productData: Omit<Product, 'id'> & { id?: string }) => {
+  const handleSaveProduct = async (productData: Omit<Product, 'id'> & { id?: string }) => {
     if (productData.id) {
-      updateProduct(productData as Product);
+      await updateProduct(productData as Product);
     } else {
-      addProduct(productData);
+      await addProduct(productData);
     }
     fetchProductsAndCategories();
     handleCloseModals();
   };
 
-  const handleConfirmDelete = () => {
+  const handleConfirmDelete = async () => {
     if (productToDelete) {
-      deleteProduct(productToDelete.id);
+      await deleteProduct(productToDelete.id);
       fetchProductsAndCategories();
       handleCloseModals();
     }
   };
   
-  const handleConfirmAdjustPrices = (targetCategory: string, percentage: number, rounding: 'none' | 'integer' | '10' | '50' | '100') => {
-    adjustProductPrices(targetCategory, percentage, rounding);
+  const handleConfirmAdjustPrices = async (targetCategory: string, percentage: number, rounding: 'none' | 'integer' | '10' | '50' | '100') => {
+    await adjustProductPrices(targetCategory, percentage, rounding);
     fetchProductsAndCategories();
     handleCloseModals();
   };
@@ -161,7 +161,7 @@ const ProductsPanel: React.FC<ProductsPanelProps> = ({ dataTimestamp }) => {
     if (!file) return;
 
     const reader = new FileReader();
-    reader.onload = (e) => {
+    reader.onload = async (e) => {
         const text = e.target?.result as string;
         const lines = text.split('\n');
         const headers = lines[0].trim().split(',').map(h => h.trim());
@@ -184,7 +184,7 @@ const ProductsPanel: React.FC<ProductsPanelProps> = ({ dataTimestamp }) => {
         }).filter(p => p && p.name && p.category && p.price);
 
         if (productsToImport.length > 0) {
-            const result = importProducts(productsToImport);
+            const result = await importProducts(productsToImport);
             setNotification({
               message: `Importación completada: ${result.added} agregados, ${result.updated} actualizados, ${result.errors} errores.`,
               type: result.errors > 0 ? 'error' : 'success'

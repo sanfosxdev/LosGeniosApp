@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import type { CustomerCategory } from '../../types';
-// Fix: Use getCustomerCategoriesFromCache instead of getCustomerCategories
-import { getCustomerCategoriesFromCache as getCustomerCategories, addCustomerCategory, updateCustomerCategory, deleteCustomerCategory } from '../../services/customerCategoryService';
+import { getCustomerCategoriesFromCache, addCustomerCategory, updateCustomerCategory, deleteCustomerCategory } from '../../services/customerCategoryService';
 import { reassignCustomersFromCategory } from '../../services/customerService';
 import { CloseIcon } from '../icons/CloseIcon';
 import { EditIcon } from '../icons/EditIcon';
@@ -24,7 +23,7 @@ const ManageCustomerCategoriesModal: React.FC<ManageCustomerCategoriesModalProps
   const isEditing = !!editingCategory;
 
   const fetchCategories = () => {
-    setCategories(getCustomerCategories());
+    setCategories(getCustomerCategoriesFromCache());
   };
 
   useEffect(() => {

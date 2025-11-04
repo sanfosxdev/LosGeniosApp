@@ -1,5 +1,5 @@
 {
-  "name": "LosGeniosApp02-11_vercel",
+  "name": "LosGeniosApp02-11_firebase",
   "description": "Una landing page visualmente atractiva para una pizzería con un asistente impulsado por IA para tomar y reservar pedidos.",
   "requestFramePermissions": [
     "microphone"

@@ -1,12 +1,12 @@
 import type { Promotion } from '../types';
-import apiService from './apiService';
+import { db, collection, getDocs, doc, setDoc, deleteDoc, writeBatch } from './firebase';
 
 const PROMOTIONS_STORAGE_KEY = 'pizzeria-promotions';
 const SHEET_NAME = 'Promotions';
 
 let promotionsCache: Promotion[] | null = null;
 
-const updateCaches = (promotions: Promotion[]) => {
+export const updateCaches = (promotions: Promotion[]) => {
     promotionsCache = promotions.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
     localStorage.setItem(PROMOTIONS_STORAGE_KEY, JSON.stringify(promotionsCache));
 };
@@ -33,11 +33,25 @@ export const getPromotionsFromCache = (): Promotion[] => {
 
 export const fetchAndCachePromotions = async (): Promise<Promotion[]> => {
     try {
-        const promotions = await apiService.get(SHEET_NAME);
+        const querySnapshot = await getDocs(collection(db, SHEET_NAME));
+        
+        if (querySnapshot.empty && getPromotionsFromCache().length > 0) {
+            console.log(`Firebase collection '${SHEET_NAME}' is empty. Seeding from local storage.`);
+            const localData = getPromotionsFromCache();
+            const batch = writeBatch(db);
+            localData.forEach(item => {
+                const docRef = doc(db, SHEET_NAME, item.id);
+                batch.set(docRef, item);
+            });
+            await batch.commit();
+            return localData;
+        }
+
+        const promotions = querySnapshot.docs.map(doc => doc.data() as Promotion);
         updateCaches(promotions);
         return promotions;
     } catch (error) {
-        console.warn('Failed to fetch promotions, using local cache.', error);
+        console.warn('Failed to fetch promotions from Firebase, using local cache.', error);
         return getPromotionsFromCache();
     }
 };
@@ -48,10 +62,10 @@ export const addPromotion = async (promotionData: Omit<Promotion, 'id' | 'create
     id: `PROMO-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
     createdAt: new Date().toISOString(),
   };
-  updateCaches([newPromotion, ...getPromotionsFromCache()]);
-
+  
   try {
-      await apiService.post('addData', { sheetName: SHEET_NAME, item: newPromotion });
+      await setDoc(doc(db, SHEET_NAME, newPromotion.id), newPromotion);
+      updateCaches([newPromotion, ...getPromotionsFromCache()]);
       return newPromotion;
   } catch (e) {
       throw new Error(`Error al guardar promoción en la nube: ${e instanceof Error ? e.message : String(e)}`);
@@ -59,16 +73,15 @@ export const addPromotion = async (promotionData: Omit<Promotion, 'id' | 'create
 };
 
 export const updatePromotion = async (updatedPromotion: Promotion): Promise<Promotion> => {
-  const promotions = getPromotionsFromCache();
-  const promotionIndex = promotions.findIndex(p => p.id === updatedPromotion.id);
-  if (promotionIndex === -1) throw new Error("Promotion not found");
-
-  const newCache = [...promotions];
-  newCache[promotionIndex] = updatedPromotion;
-  updateCaches(newCache);
-  
   try {
-      await apiService.post('updateData', { sheetName: SHEET_NAME, item: updatedPromotion });
+      await setDoc(doc(db, SHEET_NAME, updatedPromotion.id), updatedPromotion);
+      const promotions = getPromotionsFromCache();
+      const promotionIndex = promotions.findIndex(p => p.id === updatedPromotion.id);
+      if (promotionIndex !== -1) {
+        const newCache = [...promotions];
+        newCache[promotionIndex] = updatedPromotion;
+        updateCaches(newCache);
+      }
       return updatedPromotion;
   } catch (e) {
       throw new Error(`Error al actualizar promoción en la nube: ${e instanceof Error ? e.message : String(e)}`);
@@ -76,9 +89,9 @@ export const updatePromotion = async (updatedPromotion: Promotion): Promise<Prom
 };
 
 export const deletePromotion = async (promotionId: string): Promise<void> => {
-  updateCaches(getPromotionsFromCache().filter(p => p.id !== promotionId));
   try {
-      await apiService.post('deleteData', { sheetName: SHEET_NAME, itemId: promotionId });
+      await deleteDoc(doc(db, SHEET_NAME, promotionId));
+      updateCaches(getPromotionsFromCache().filter(p => p.id !== promotionId));
   } catch (e) {
       throw new Error(`Error al eliminar promoción en la nube: ${e instanceof Error ? e.message : String(e)}`);
   }

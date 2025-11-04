@@ -5,16 +5,17 @@ import { getTablesFromCache } from './tableService';
 import { getOrdersFromCache, isOrderFinished } from './orderService';
 import { getScheduleExceptionsFromCache } from './scheduleExceptionService';
 import { addNotification } from './notificationService';
-import apiService from './apiService';
+import { db, collection, getDocs, doc, setDoc, deleteDoc, writeBatch, getDoc } from './firebase';
 
 const RESERVATIONS_STORAGE_KEY = 'pizzeria-reservations';
 const RESERVATION_SETTINGS_STORAGE_KEY = 'pizzeria-reservation-settings';
+const RESERVATION_SETTINGS_DOC_ID = 'main';
 const RESERVATION_SETTINGS_SHEET_NAME = 'ReservationSettings';
 const SHEET_NAME = 'Reservations';
 
 let reservationsCache: Reservation[] | null = null;
 
-const updateCaches = (reservations: Reservation[]) => {
+export const updateCaches = (reservations: Reservation[]) => {
     reservationsCache = reservations.sort((a, b) => new Date(a.reservationTime).getTime() - new Date(b.reservationTime).getTime());
     localStorage.setItem(RESERVATIONS_STORAGE_KEY, JSON.stringify(reservationsCache));
 };
@@ -57,8 +58,7 @@ export const getReservationSettings = (): ReservationSettings => {
 export const saveReservationSettings = async (settings: ReservationSettings): Promise<void> => {
   try {
     localStorage.setItem(RESERVATION_SETTINGS_STORAGE_KEY, JSON.stringify(settings));
-    const headers = Object.keys(defaultReservationSettings);
-    await apiService.post('syncDataType', { sheetName: RESERVATION_SETTINGS_SHEET_NAME, items: [settings], headers });
+    await setDoc(doc(db, RESERVATION_SETTINGS_SHEET_NAME, RESERVATION_SETTINGS_DOC_ID), settings);
   } catch (error) {
     console.error("Failed to save reservation settings", error);
     throw error;
@@ -67,13 +67,23 @@ export const saveReservationSettings = async (settings: ReservationSettings): Pr
 
 export const fetchAndCacheReservationSettings = async (): Promise<ReservationSettings> => {
     try {
-        const settingsArray = await apiService.get(RESERVATION_SETTINGS_SHEET_NAME);
-        const settingsFromSheet = settingsArray && settingsArray.length > 0 ? settingsArray[0] : {};
-        const finalSettings = { ...defaultReservationSettings, ...settingsFromSheet };
+        const docRef = doc(db, RESERVATION_SETTINGS_SHEET_NAME, RESERVATION_SETTINGS_DOC_ID);
+        const docSnap = await getDoc(docRef);
+
+        let finalSettings = defaultReservationSettings;
+        if (docSnap.exists()) {
+            finalSettings = { ...defaultReservationSettings, ...docSnap.data() };
+        } else {
+            // If doesn't exist in Firebase, seed it from local or default
+            const localSettings = getReservationSettings();
+            await setDoc(docRef, localSettings);
+            finalSettings = localSettings;
+        }
+
         localStorage.setItem(RESERVATION_SETTINGS_STORAGE_KEY, JSON.stringify(finalSettings));
         return finalSettings;
     } catch (error) {
-        console.warn('Failed to fetch reservation settings from sheet, using local cache.', error);
+        console.warn('Failed to fetch reservation settings from Firebase, using local cache.', error);
         return getReservationSettings();
     }
 };
@@ -84,32 +94,25 @@ export const getReservationsFromCache = (): Reservation[] => {
 
 export const fetchAndCacheReservations = async (): Promise<Reservation[]> => {
     try {
-        const reservations = await apiService.get(SHEET_NAME);
-        // Data migration to ensure tableIds is always an array
-        reservations.forEach((res: any) => {
-            if (typeof res.tableIds === 'string') {
-                if (res.tableIds.startsWith('[')) {
-                    try { 
-                        const parsed = JSON.parse(res.tableIds);
-                        res.tableIds = Array.isArray(parsed) ? parsed : [];
-                    } catch (e) { 
-                        res.tableIds = [];
-                    }
-                } else if (res.tableIds.trim()) {
-                    res.tableIds = res.tableIds.split(',').map(s => s.trim());
-                } else {
-                    res.tableIds = [];
-                }
-            } else if (res.tableIds && !Array.isArray(res.tableIds)) {
-                res.tableIds = [String(res.tableIds)];
-            } else if (!res.tableIds) {
-                res.tableIds = [];
-            }
-        });
+        const querySnapshot = await getDocs(collection(db, SHEET_NAME));
+        
+        if (querySnapshot.empty && getReservationsFromCache().length > 0) {
+            console.log(`Firebase collection '${SHEET_NAME}' is empty. Seeding from local storage.`);
+            const localData = getReservationsFromCache();
+            const batch = writeBatch(db);
+            localData.forEach(item => {
+                const docRef = doc(db, SHEET_NAME, item.id);
+                batch.set(docRef, item);
+            });
+            await batch.commit();
+            return localData;
+        }
+
+        const reservations = querySnapshot.docs.map(doc => doc.data() as Reservation);
         updateCaches(reservations);
         return reservations;
     } catch (error) {
-        console.warn('Failed to fetch reservations, using local cache.', error);
+        console.warn('Failed to fetch reservations from Firebase, using local cache.', error);
         return getReservationsFromCache();
     }
 };
@@ -125,10 +128,10 @@ export const addReservation = async (reservationData: Omit<Reservation, 'id' | '
         statusHistory: [{ status: ReservationStatus.PENDING, startedAt: now }],
         finishedAt: null,
     };
-    updateCaches([newReservation, ...getReservationsFromCache()]);
     
     try {
-        await apiService.post('addData', { sheetName: SHEET_NAME, item: newReservation });
+        await setDoc(doc(db, SHEET_NAME, newReservation.id), newReservation);
+        updateCaches([newReservation, ...getReservationsFromCache()]);
         return newReservation;
     } catch (e) {
         throw new Error(`Error al guardar reserva en la nube: ${e instanceof Error ? e.message : String(e)}`);
@@ -136,16 +139,15 @@ export const addReservation = async (reservationData: Omit<Reservation, 'id' | '
 };
 
 export const updateReservation = async (updatedReservation: Reservation): Promise<Reservation> => {
-    const reservations = getReservationsFromCache();
-    const reservationIndex = reservations.findIndex(r => r.id === updatedReservation.id);
-    if (reservationIndex === -1) throw new Error("Reservation not found");
-
-    const newCache = [...reservations];
-    newCache[reservationIndex] = updatedReservation;
-    updateCaches(newCache);
-    
     try {
-        await apiService.post('updateData', { sheetName: SHEET_NAME, item: updatedReservation });
+        await setDoc(doc(db, SHEET_NAME, updatedReservation.id), updatedReservation);
+        const reservations = getReservationsFromCache();
+        const reservationIndex = reservations.findIndex(r => r.id === updatedReservation.id);
+        if (reservationIndex !== -1) {
+            const newCache = [...reservations];
+            newCache[reservationIndex] = updatedReservation;
+            updateCaches(newCache);
+        }
         return updatedReservation;
     } catch (e) {
         throw new Error(`Error al actualizar reserva en la nube: ${e instanceof Error ? e.message : String(e)}`);
@@ -153,9 +155,9 @@ export const updateReservation = async (updatedReservation: Reservation): Promis
 };
 
 export const deleteReservation = async (reservationId: string): Promise<void> => {
-    updateCaches(getReservationsFromCache().filter(r => r.id !== reservationId));
     try {
-        await apiService.post('deleteData', { sheetName: SHEET_NAME, itemId: reservationId });
+        await deleteDoc(doc(db, SHEET_NAME, reservationId));
+        updateCaches(getReservationsFromCache().filter(r => r.id !== reservationId));
     } catch (e) {
         throw new Error(`Error al eliminar reserva en la nube: ${e instanceof Error ? e.message : String(e)}`);
     }
@@ -175,14 +177,13 @@ export const updateReservationStatus = async (reservationId: string, status: Res
     if (status === ReservationStatus.CANCELLED) reservation.cancellationReason = cancellationReason;
     if (finishedStatuses.includes(status)) reservation.finishedAt = new Date().toISOString();
     
-    const newCache = [...reservations];
-    newCache[reservationIndex] = reservation;
-    updateCaches(newCache);
-    
     addNotification({ message: `La reserva de ${reservation.customerName} cambió a: ${status}.`, type: 'reservation', relatedId: reservation.id });
     
     try {
-        await apiService.post('updateData', { sheetName: SHEET_NAME, item: reservation });
+        await setDoc(doc(db, SHEET_NAME, reservation.id), reservation);
+        const newCache = [...reservations];
+        newCache[reservationIndex] = reservation;
+        updateCaches(newCache);
         return reservation;
     } catch (e) {
         throw new Error(`Error al actualizar estado en la nube: ${e instanceof Error ? e.message : String(e)}`);

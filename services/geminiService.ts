@@ -6,6 +6,8 @@ import type { TimeSlot, ChatMessage } from '../types';
 import { MessageSender } from '../types';
 import { getOrdersFromCache, isOrderFinished } from './orderService';
 import { OrderType, ReservationStatus } from '../types';
+// Fix: Import GoogleGenAI for use in transcribeAudio
+import { GoogleGenAI } from "@google/genai";
 
 const generateMenuForPrompt = (): string => {
     const products = getProductsFromCache();
@@ -387,21 +389,25 @@ export const createChatSession = (history: ChatMessage[] = [], actionLock: 'orde
 
 export const transcribeAudio = async (base64Audio: string, mimeType: string): Promise<string> => {
     try {
-        const response = await fetch('/.netlify/functions/transcribe', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ audio: base64Audio, mimeType: mimeType }),
+        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY! });
+        const audioPart = {
+            inlineData: {
+                mimeType: mimeType,
+                data: base64Audio,
+            },
+        };
+        const textPart = {
+            text: "Transcribe este audio. Responde únicamente con el texto transcrito, sin ningún comentario adicional o frases como 'Aquí está la transcripción'."
+        };
+
+        const response = await ai.models.generateContent({
+            model: 'gemini-2.5-flash',
+            contents: { parts: [audioPart, textPart] },
         });
 
-        if (!response.ok) {
-            const errorData = await response.json().catch(() => ({ error: 'Server error' }));
-            throw new Error(errorData.error || "Failed to transcribe audio.");
-        }
-
-        const data = await response.json();
-        return data.text.trim();
+        return response.text.trim();
     } catch (error) {
-        console.error("Error transcribing audio via serverless function:", error);
+        console.error("Error transcribing audio via Gemini API:", error);
         throw new Error("Failed to transcribe audio.");
     }
 };

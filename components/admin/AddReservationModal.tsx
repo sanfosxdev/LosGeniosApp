@@ -1,10 +1,7 @@
-
-
 import React, { useState, useEffect } from 'react';
 import type { Reservation, Customer } from '../../types';
 import { ReservationStatus, CreatedBy } from '../../types';
-// Fix: Use getCustomersFromCache instead of getCustomers
-import { getCustomersFromCache as getCustomers } from '../../services/customerService';
+import { getCustomersFromCache } from '../../services/customerService';
 import { getAvailability, findAvailableTables } from '../../services/reservationService';
 import { CloseIcon } from '../icons/CloseIcon';
 
@@ -37,10 +34,10 @@ const AddReservationModal: React.FC<AddReservationModalProps> = ({ isOpen, onClo
     if (isOpen) {
       const today = new Date().toISOString().split('T')[0];
       setMinDate(today);
-      setCustomers(getCustomers());
+      setCustomers(getCustomersFromCache());
       setSubmissionError(null);
       if (reservationToEdit) {
-        const customer = getCustomers().find(c => c.name === reservationToEdit.customerName && c.phone === reservationToEdit.customerPhone);
+        const customer = getCustomersFromCache().find(c => c.name === reservationToEdit.customerName && c.phone === reservationToEdit.customerPhone);
         setSelectedCustomerId(customer?.id || '');
         setCustomerName(reservationToEdit.customerName);
         setCustomerPhone(reservationToEdit.customerPhone || '');

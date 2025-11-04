@@ -1,5 +1,5 @@
 import type { Product, MenuItem } from '../types';
-import apiService from './apiService';
+import { db, collection, getDocs, doc, setDoc, deleteDoc, writeBatch } from './firebase';
 
 const PRODUCTS_STORAGE_KEY = 'pizzeria-products';
 const SHEET_NAME = 'Products';
@@ -8,7 +8,7 @@ const SHEET_NAME = 'Products';
 let productsCache: Product[] | null = null;
 
 // Helper to update both caches
-const updateCaches = (products: Product[]) => {
+export const updateCaches = (products: Product[]) => {
     productsCache = products;
     localStorage.setItem(PRODUCTS_STORAGE_KEY, JSON.stringify(products));
 };
@@ -84,11 +84,25 @@ export const getProductsFromCache = (): Product[] => {
 
 export const fetchAndCacheProducts = async (): Promise<Product[]> => {
     try {
-        const productsFromSheet = await apiService.get(SHEET_NAME);
-        updateCaches(productsFromSheet);
-        return productsFromSheet;
+        const querySnapshot = await getDocs(collection(db, SHEET_NAME));
+        
+        if (querySnapshot.empty && getProductsFromCache().length > 0) {
+            console.log(`Firebase collection '${SHEET_NAME}' is empty. Seeding from local storage.`);
+            const localData = getProductsFromCache();
+            const batch = writeBatch(db);
+            localData.forEach(item => {
+                const docRef = doc(db, SHEET_NAME, item.id);
+                batch.set(docRef, item);
+            });
+            await batch.commit();
+            return localData;
+        }
+
+        const products = querySnapshot.docs.map(doc => doc.data() as Product);
+        updateCaches(products);
+        return products;
     } catch (error) {
-        console.warn('Failed to fetch products from sheet, using local cache.', error);
+        console.warn('Failed to fetch products from Firebase, using local cache.', error);
         return getProductsFromCache();
     }
 };
@@ -98,47 +112,37 @@ export const addProduct = async (productData: Omit<Product, 'id'>): Promise<Prod
         ...productData,
         id: `PROD-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
     };
-
-    const currentCache = getProductsFromCache();
-    updateCaches([...currentCache, newProduct]);
-
     try {
-        await apiService.post('addData', { sheetName: SHEET_NAME, item: newProduct });
+        await setDoc(doc(db, SHEET_NAME, newProduct.id), newProduct);
+        updateCaches([...getProductsFromCache(), newProduct]);
         return newProduct;
-    } catch (error) {
-        console.error('Failed to add product to sheet. It is saved locally.', error);
-        throw new Error('No se pudo guardar el producto en la base de datos. Se guardó localmente.');
+    } catch(e) {
+        throw new Error(`Error al guardar producto en la nube: ${e instanceof Error ? e.message : String(e)}`);
     }
 };
 
 export const updateProduct = async (updatedProduct: Product): Promise<Product> => {
-    const currentCache = getProductsFromCache();
-    const productIndex = currentCache.findIndex(p => p.id === updatedProduct.id);
-
-    if (productIndex !== -1) {
-        const newCache = [...currentCache];
-        newCache[productIndex] = updatedProduct;
-        updateCaches(newCache);
-    }
-
     try {
-        await apiService.post('updateData', { sheetName: SHEET_NAME, item: updatedProduct });
+        await setDoc(doc(db, SHEET_NAME, updatedProduct.id), updatedProduct);
+        const currentCache = getProductsFromCache();
+        const productIndex = currentCache.findIndex(p => p.id === updatedProduct.id);
+        if (productIndex !== -1) {
+            const newCache = [...currentCache];
+            newCache[productIndex] = updatedProduct;
+            updateCaches(newCache);
+        }
         return updatedProduct;
-    } catch (error) {
-        console.error('Failed to update product in sheet.', error);
-        throw new Error('No se pudo actualizar el producto. Los cambios se guardaron localmente.');
+    } catch (e) {
+        throw new Error(`Error al actualizar producto en la nube: ${e instanceof Error ? e.message : String(e)}`);
     }
 };
 
 export const deleteProduct = async (productId: string): Promise<void> => {
-    const newCache = getProductsFromCache().filter(p => p.id !== productId);
-    updateCaches(newCache);
-
     try {
-        await apiService.post('deleteData', { sheetName: SHEET_NAME, itemId: productId });
-    } catch (error) {
-        console.error('Failed to delete product from sheet.', error);
-        throw new Error('No se pudo eliminar el producto de la base de datos. Se eliminó localmente.');
+        await deleteDoc(doc(db, SHEET_NAME, productId));
+        updateCaches(getProductsFromCache().filter(p => p.id !== productId));
+    } catch (e) {
+        throw new Error(`Error al eliminar producto en la nube: ${e instanceof Error ? e.message : String(e)}`);
     }
 };
 
@@ -161,6 +165,8 @@ export const adjustProductPrices = async (
     }
   };
 
+  const productsToUpdate = products.filter(p => targetCategory === 'all' || p.category === targetCategory);
+
   const updatedProducts = products.map(product => {
     if (targetCategory === 'all' || product.category === targetCategory) {
       const currentPrice = parseFloat(product.price);
@@ -172,45 +178,56 @@ export const adjustProductPrices = async (
     return product;
   });
   
-  updateCaches(updatedProducts);
-
   try {
-    const headers = ['id', 'category', 'name', 'description', 'price', 'imageUrl'];
-    await apiService.post('syncDataType', { sheetName: SHEET_NAME, items: updatedProducts, headers });
+    const batch = writeBatch(db);
+    productsToUpdate.forEach(product => {
+        const currentPrice = parseFloat(product.price);
+        if(!isNaN(currentPrice)) {
+            const newPrice = currentPrice * adjustmentFactor;
+            const docRef = doc(db, SHEET_NAME, product.id);
+            batch.update(docRef, { price: roundPrice(newPrice).toString() });
+        }
+    });
+    await batch.commit();
+    updateCaches(updatedProducts);
   } catch (error) {
     console.error('Failed to sync adjusted prices.', error);
     throw new Error('No se pudo sincronizar el ajuste de precios. Los cambios se guardaron localmente.');
   }
 };
 
-export const importProducts = (
+export const importProducts = async (
   productsToImport: Omit<Product, 'id' | 'imageUrl'>[]
-): { added: number; updated: number; errors: number } => {
+): Promise<{ added: number; updated: number; errors: number }> => {
   const existingProducts = getProductsFromCache();
   let added = 0;
   let updated = 0;
   let errors = 0;
+
+  const batch = writeBatch(db);
 
   productsToImport.forEach(newProd => {
     if (!newProd.name || !newProd.category || !newProd.price) {
       errors++;
       return;
     }
-    const existingProductIndex = existingProducts.findIndex(p => p.name.trim().toLowerCase() === newProd.name.trim().toLowerCase() && p.category === newProd.category);
-    if (existingProductIndex > -1) {
-      existingProducts[existingProductIndex] = { ...existingProducts[existingProductIndex], ...newProd };
+    const existingProduct = existingProducts.find(p => p.name.trim().toLowerCase() === newProd.name.trim().toLowerCase() && p.category === newProd.category);
+    
+    if (existingProduct) {
+      const docRef = doc(db, SHEET_NAME, existingProduct.id);
+      batch.set(docRef, { ...existingProduct, ...newProd });
       updated++;
     } else {
-      const newProduct: Product = { ...newProd, id: `PROD-${Date.now()}-${Math.random().toString(36).substring(2, 9)}` };
-      existingProducts.push(newProduct);
+      const newId = `PROD-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+      const newProduct: Product = { ...newProd, id: newId };
+      const docRef = doc(db, SHEET_NAME, newId);
+      batch.set(docRef, newProduct);
       added++;
     }
   });
 
-  updateCaches(existingProducts);
-  // Defer the sync to avoid blocking UI. The user can sync manually if needed.
-  const headers = ['id', 'category', 'name', 'description', 'price', 'imageUrl'];
-  apiService.post('syncDataType', { sheetName: SHEET_NAME, items: existingProducts, headers }).catch(e => console.error("Error syncing imported products:", e));
+  await batch.commit();
+  await fetchAndCacheProducts();
   
   return { added, updated, errors };
 };

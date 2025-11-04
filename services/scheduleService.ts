@@ -1,9 +1,11 @@
 import type { Schedule, DaySchedule, TimeSlot } from '../types';
 import { getScheduleExceptionsFromCache } from './scheduleExceptionService';
 import { ExceptionType } from '../types';
-import apiService from './apiService';
+import { db, collection, getDoc, doc, setDoc } from './firebase';
 
 const SCHEDULE_STORAGE_KEY = 'pizzeria-schedule';
+const SCHEDULE_COLLECTION_NAME = 'Schedule';
+const SCHEDULE_DOC_ID = 'main';
 
 let scheduleCache: Schedule | null = null;
 
@@ -68,50 +70,21 @@ export const getScheduleFromCache = (): Schedule => {
 
 export const fetchAndCacheSchedule = async (): Promise<Schedule> => {
     try {
-        const scheduleArray: any[] = await apiService.get('Schedule');
+        const docRef = doc(db, SCHEDULE_COLLECTION_NAME, SCHEDULE_DOC_ID);
+        const docSnap = await getDoc(docRef);
         
-        if (!Array.isArray(scheduleArray) || scheduleArray.length < 7) {
-            console.warn('Schedule from sheet is incomplete or invalid, using local cache.');
-            return getScheduleFromCache();
+        if (docSnap.exists()) {
+            const scheduleFromDb = docSnap.data() as Schedule;
+            updateCaches(scheduleFromDb);
+            return scheduleFromDb;
+        } else {
+            // If it doesn't exist in Firebase, use local/initial and save it.
+            const localSchedule = getScheduleFromCache();
+            await setDoc(docRef, localSchedule);
+            return localSchedule;
         }
-
-        const newSchedule = scheduleArray.reduce((acc, dayData) => {
-            if (dayData && dayData.day && typeof dayData.isOpen === 'boolean') {
-                let slots: TimeSlot[] = [];
-                if (typeof dayData.slots === 'string') {
-                    try {
-                        const parsedSlots = JSON.parse(dayData.slots);
-                        if (Array.isArray(parsedSlots)) {
-                           slots = parsedSlots;
-                        }
-                    } catch (e) {
-                        console.error(`Failed to parse slots for day ${dayData.day}:`, dayData.slots);
-                    }
-                } else if (Array.isArray(dayData.slots)) {
-                    slots = dayData.slots;
-                }
-                
-                acc[dayData.day] = {
-                    isOpen: dayData.isOpen,
-                    slots: slots.length > 0 ? slots : [{ open: '18:00', close: '23:00' }],
-                };
-            }
-            return acc;
-        }, {} as Schedule);
-
-        const days = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
-        const isComplete = days.every(day => newSchedule.hasOwnProperty(day));
-        
-        if (!isComplete) {
-            console.warn('Fetched schedule is missing days, falling back to cache.');
-            return getScheduleFromCache();
-        }
-
-        updateCaches(newSchedule);
-        return newSchedule;
-
     } catch (error) {
-        console.warn('Failed to fetch schedule from sheet, using local cache.', error);
+        console.warn('Failed to fetch schedule from Firebase, using local cache.', error);
         return getScheduleFromCache();
     }
 };
@@ -120,10 +93,10 @@ export const saveSchedule = async (schedule: Schedule): Promise<void> => {
   try {
     // Optimistic update: save locally first
     updateCaches(schedule);
-    // Then, save to the sheet
-    await apiService.post('saveSchedule', schedule);
+    // Then, save to Firebase
+    await setDoc(doc(db, SCHEDULE_COLLECTION_NAME, SCHEDULE_DOC_ID), schedule);
   } catch (error) {
-    console.error("Failed to save schedule to Google Sheet. It is saved locally.", error);
+    console.error("Failed to save schedule to Firebase. It is saved locally.", error);
     // Re-throw the error to be caught by the UI
     throw new Error('No se pudo guardar el horario en la base de datos. Se guardó localmente.');
   }

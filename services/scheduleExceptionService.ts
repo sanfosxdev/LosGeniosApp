@@ -1,12 +1,12 @@
 import type { ScheduleException } from '../types';
-import apiService from './apiService';
+import { db, collection, getDocs, doc, setDoc, deleteDoc, writeBatch } from './firebase';
 
 const EXCEPTIONS_STORAGE_KEY = 'pizzeria-schedule-exceptions';
 const SHEET_NAME = 'ScheduleExceptions';
 
 let exceptionsCache: ScheduleException[] | null = null;
 
-const updateCaches = (exceptions: ScheduleException[]) => {
+export const updateCaches = (exceptions: ScheduleException[]) => {
     exceptionsCache = exceptions;
     localStorage.setItem(EXCEPTIONS_STORAGE_KEY, JSON.stringify(exceptions));
 };
@@ -32,11 +32,25 @@ export const getScheduleExceptionsFromCache = (): ScheduleException[] => {
 
 export const fetchAndCacheScheduleExceptions = async (): Promise<ScheduleException[]> => {
     try {
-        const exceptions = await apiService.get(SHEET_NAME);
+        const querySnapshot = await getDocs(collection(db, SHEET_NAME));
+        
+        if (querySnapshot.empty && getScheduleExceptionsFromCache().length > 0) {
+            console.log(`Firebase collection '${SHEET_NAME}' is empty. Seeding from local storage.`);
+            const localData = getScheduleExceptionsFromCache();
+            const batch = writeBatch(db);
+            localData.forEach(item => {
+                const docRef = doc(db, SHEET_NAME, item.id);
+                batch.set(docRef, item);
+            });
+            await batch.commit();
+            return localData;
+        }
+
+        const exceptions = querySnapshot.docs.map(doc => doc.data() as ScheduleException);
         updateCaches(exceptions);
         return exceptions;
     } catch (e) {
-        console.warn("Could not fetch schedule exceptions, using local cache.", e);
+        console.warn("Could not fetch schedule exceptions from Firebase, using local cache.", e);
         return getScheduleExceptionsFromCache();
     }
 };
@@ -47,10 +61,9 @@ export const addScheduleException = async (exceptionData: Omit<ScheduleException
     id: `EXC-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
   };
 
-  updateCaches([...getScheduleExceptionsFromCache(), newException]);
-
   try {
-      await apiService.post('addData', { sheetName: SHEET_NAME, item: newException });
+      await setDoc(doc(db, SHEET_NAME, newException.id), newException);
+      updateCaches([...getScheduleExceptionsFromCache(), newException]);
       return newException;
   } catch (e) {
       throw new Error(`Failed to save exception: ${e instanceof Error ? e.message : String(e)}`);
@@ -58,16 +71,15 @@ export const addScheduleException = async (exceptionData: Omit<ScheduleException
 };
 
 export const updateScheduleException = async (updatedException: ScheduleException): Promise<ScheduleException> => {
-  const exceptions = getScheduleExceptionsFromCache();
-  const exceptionIndex = exceptions.findIndex(e => e.id === updatedException.id);
-  if (exceptionIndex === -1) throw new Error("Exception not found");
-
-  const newCache = [...exceptions];
-  newCache[exceptionIndex] = updatedException;
-  updateCaches(newCache);
-  
   try {
-    await apiService.post('updateData', { sheetName: SHEET_NAME, item: updatedException });
+    await setDoc(doc(db, SHEET_NAME, updatedException.id), updatedException);
+    const exceptions = getScheduleExceptionsFromCache();
+    const exceptionIndex = exceptions.findIndex(e => e.id === updatedException.id);
+    if (exceptionIndex !== -1) {
+        const newCache = [...exceptions];
+        newCache[exceptionIndex] = updatedException;
+        updateCaches(newCache);
+    }
     return updatedException;
   } catch (e) {
     throw new Error(`Failed to update exception: ${e instanceof Error ? e.message : String(e)}`);
@@ -75,10 +87,9 @@ export const updateScheduleException = async (updatedException: ScheduleExceptio
 };
 
 export const deleteScheduleException = async (exceptionId: string): Promise<void> => {
-  updateCaches(getScheduleExceptionsFromCache().filter(e => e.id !== exceptionId));
-  
   try {
-    await apiService.post('deleteData', { sheetName: SHEET_NAME, itemId: exceptionId });
+    await deleteDoc(doc(db, SHEET_NAME, exceptionId));
+    updateCaches(getScheduleExceptionsFromCache().filter(e => e.id !== exceptionId));
   } catch (e) {
     throw new Error(`Failed to delete exception: ${e instanceof Error ? e.message : String(e)}`);
   }

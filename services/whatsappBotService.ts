@@ -1,5 +1,5 @@
 // These values should be in environment variables
-import apiService from './apiService';
+import { db, addDoc, collection } from './firebase';
 const projectId = 'e40701d9-d93a-451f-9d5b-5cb02c237add';
 const builderBotApiKey = 'bbc-ff129879-89ee-43a5-a28b-640480e3294a';
 const builderBotV2ApiKey = 'bb-e25d1057-de9a-4cc0-b103-4bcbc2873820';
@@ -244,10 +244,7 @@ export const logStatusChange = async (status: string, details: string): Promise<
             botStatus: status
         };
 
-        await apiService.post('addData', {
-            sheetName: WEBHOOK_LOGS_SHEET_NAME,
-            item: logEntry
-        });
+        await addDoc(collection(db, WEBHOOK_LOGS_SHEET_NAME), logEntry);
     } catch (error) {
         console.error("Failed to log WhatsApp status change:", error);
     }

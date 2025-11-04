@@ -1,13 +1,13 @@
 import type { CustomerCategory } from '../types';
 import { reassignCustomersFromCategory } from './customerService';
-import apiService from './apiService';
+import { db, collection, getDocs, doc, setDoc, deleteDoc, writeBatch } from './firebase';
 
 const CUSTOMER_CATEGORIES_STORAGE_KEY = 'pizzeria-customer-categories';
 const SHEET_NAME = 'CustomerCategories';
 
 let categoriesCache: CustomerCategory[] | null = null;
 
-const updateCaches = (categories: CustomerCategory[]) => {
+export const updateCaches = (categories: CustomerCategory[]) => {
     categoriesCache = categories.sort((a, b) => a.name.localeCompare(b.name));
     localStorage.setItem(CUSTOMER_CATEGORIES_STORAGE_KEY, JSON.stringify(categoriesCache));
 };
@@ -59,7 +59,21 @@ export const getCustomerCategoriesFromCache = (): CustomerCategory[] => {
 
 export const fetchAndCacheCustomerCategories = async (): Promise<CustomerCategory[]> => {
     try {
-        const categories = await apiService.get(SHEET_NAME);
+        const querySnapshot = await getDocs(collection(db, SHEET_NAME));
+        
+        if (querySnapshot.empty && getCustomerCategoriesFromCache().length > 0) {
+            console.log(`Firebase collection '${SHEET_NAME}' is empty. Seeding from local storage.`);
+            const localData = getCustomerCategoriesFromCache();
+            const batch = writeBatch(db);
+            localData.forEach(item => {
+                const docRef = doc(db, SHEET_NAME, item.id);
+                batch.set(docRef, item);
+            });
+            await batch.commit();
+            return localData;
+        }
+
+        const categories = querySnapshot.docs.map(doc => doc.data() as CustomerCategory);
         updateCaches(categories);
         return categories;
     } catch(e) {
@@ -73,10 +87,9 @@ export const addCustomerCategory = async (categoryData: Omit<CustomerCategory, '
         ...categoryData,
         id: `CUSTCAT-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
     };
-    updateCaches([...getCustomerCategoriesFromCache(), newCategory]);
-    
     try {
-        await apiService.post('addData', { sheetName: SHEET_NAME, item: newCategory });
+        await setDoc(doc(db, SHEET_NAME, newCategory.id), newCategory);
+        updateCaches([...getCustomerCategoriesFromCache(), newCategory]);
         return newCategory;
     } catch(e) {
         throw new Error(`Failed to save customer category: ${e instanceof Error ? e.message : String(e)}`);
@@ -84,16 +97,15 @@ export const addCustomerCategory = async (categoryData: Omit<CustomerCategory, '
 };
 
 export const updateCustomerCategory = async (updatedCategory: CustomerCategory): Promise<CustomerCategory> => {
-    const currentCache = getCustomerCategoriesFromCache();
-    const categoryIndex = currentCache.findIndex(c => c.id === updatedCategory.id);
-    if (categoryIndex !== -1) {
-        const newCache = [...currentCache];
-        newCache[categoryIndex] = updatedCategory;
-        updateCaches(newCache);
-    }
-
     try {
-        await apiService.post('updateData', { sheetName: SHEET_NAME, item: updatedCategory });
+        await setDoc(doc(db, SHEET_NAME, updatedCategory.id), updatedCategory);
+        const currentCache = getCustomerCategoriesFromCache();
+        const categoryIndex = currentCache.findIndex(c => c.id === updatedCategory.id);
+        if (categoryIndex !== -1) {
+            const newCache = [...currentCache];
+            newCache[categoryIndex] = updatedCategory;
+            updateCaches(newCache);
+        }
         return updatedCategory;
     } catch(e) {
         throw new Error(`Failed to update customer category: ${e instanceof Error ? e.message : String(e)}`);
@@ -107,11 +119,11 @@ export const deleteCustomerCategory = async (categoryId: string): Promise<void> 
     }
     
     await reassignCustomersFromCategory(categoryId);
-    const newCache = getCustomerCategoriesFromCache().filter(c => c.id !== categoryId);
-    updateCaches(newCache);
     
     try {
-        await apiService.post('deleteData', { sheetName: SHEET_NAME, itemId: categoryId });
+        await deleteDoc(doc(db, SHEET_NAME, categoryId));
+        const newCache = getCustomerCategoriesFromCache().filter(c => c.id !== categoryId);
+        updateCaches(newCache);
     } catch(e) {
         throw new Error(`Failed to delete customer category: ${e instanceof Error ? e.message : String(e)}`);
     }

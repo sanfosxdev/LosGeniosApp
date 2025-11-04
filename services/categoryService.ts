@@ -1,12 +1,12 @@
 import type { Category } from '../types';
-import apiService from './apiService';
+import { db, collection, getDocs, doc, setDoc, deleteDoc, writeBatch } from './firebase';
 
 const CATEGORIES_STORAGE_KEY = 'pizzeria-categories';
 const SHEET_NAME = 'Categories';
 
 let categoriesCache: Category[] | null = null;
 
-const updateCaches = (categories: Category[]) => {
+export const updateCaches = (categories: Category[]) => {
     categoriesCache = categories.sort((a, b) => a.name.localeCompare(b.name));
     localStorage.setItem(CATEGORIES_STORAGE_KEY, JSON.stringify(categoriesCache));
 };
@@ -59,11 +59,25 @@ export const getCategoriesFromCache = (): Category[] => {
 
 export const fetchAndCacheCategories = async (): Promise<Category[]> => {
     try {
-        const categoriesFromSheet = await apiService.get(SHEET_NAME);
-        updateCaches(categoriesFromSheet);
-        return categoriesFromSheet;
+        const querySnapshot = await getDocs(collection(db, SHEET_NAME));
+        
+        if (querySnapshot.empty && getCategoriesFromCache().length > 0) {
+            console.log(`Firebase collection '${SHEET_NAME}' is empty. Seeding from local storage.`);
+            const localData = getCategoriesFromCache();
+            const batch = writeBatch(db);
+            localData.forEach(item => {
+                const docRef = doc(db, SHEET_NAME, item.id);
+                batch.set(docRef, item);
+            });
+            await batch.commit();
+            return localData;
+        }
+
+        const categoriesFromFirebase = querySnapshot.docs.map(doc => doc.data() as Category);
+        updateCaches(categoriesFromFirebase);
+        return categoriesFromFirebase;
     } catch (error) {
-        console.warn('Failed to fetch categories, using local cache.', error);
+        console.warn('Failed to fetch categories from Firebase, using local cache.', error);
         return getCategoriesFromCache();
     }
 };
@@ -73,29 +87,28 @@ export const addCategory = async (categoryData: Omit<Category, 'id'>): Promise<C
         ...categoryData,
         id: `CAT-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
     };
-    const currentCache = getCategoriesFromCache();
-    updateCaches([...currentCache, newCategory]);
 
     try {
-        await apiService.post('addData', { sheetName: SHEET_NAME, item: newCategory });
+        await setDoc(doc(db, SHEET_NAME, newCategory.id), newCategory);
+        const currentCache = getCategoriesFromCache();
+        updateCaches([...currentCache, newCategory]);
         return newCategory;
     } catch (error) {
-        console.error('Failed to add category to sheet.', error);
+        console.error('Failed to add category to Firebase.', error);
         throw new Error('No se pudo guardar la categoría en la base de datos.');
     }
 };
 
 export const updateCategory = async (updatedCategory: Category): Promise<Category> => {
-    const currentCache = getCategoriesFromCache();
-    const categoryIndex = currentCache.findIndex(c => c.id === updatedCategory.id);
-    if (categoryIndex !== -1) {
-        const newCache = [...currentCache];
-        newCache[categoryIndex] = updatedCategory;
-        updateCaches(newCache);
-    }
-
     try {
-        await apiService.post('updateData', { sheetName: SHEET_NAME, item: updatedCategory });
+        await setDoc(doc(db, SHEET_NAME, updatedCategory.id), updatedCategory);
+        const currentCache = getCategoriesFromCache();
+        const categoryIndex = currentCache.findIndex(c => c.id === updatedCategory.id);
+        if (categoryIndex !== -1) {
+            const newCache = [...currentCache];
+            newCache[categoryIndex] = updatedCategory;
+            updateCaches(newCache);
+        }
         return updatedCategory;
     } catch (error) {
         console.error('Failed to update category.', error);
@@ -104,11 +117,10 @@ export const updateCategory = async (updatedCategory: Category): Promise<Categor
 };
 
 export const deleteCategory = async (categoryId: string): Promise<void> => {
-    const newCache = getCategoriesFromCache().filter(c => c.id !== categoryId);
-    updateCaches(newCache);
-    
     try {
-        await apiService.post('deleteData', { sheetName: SHEET_NAME, itemId: categoryId });
+        await deleteDoc(doc(db, SHEET_NAME, categoryId));
+        const newCache = getCategoriesFromCache().filter(c => c.id !== categoryId);
+        updateCaches(newCache);
     } catch (error) {
         console.error('Failed to delete category.', error);
         throw new Error('No se pudo eliminar la categoría de la base de datos.');

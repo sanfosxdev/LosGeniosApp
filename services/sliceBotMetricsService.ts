@@ -1,10 +1,12 @@
 import type { SliceBotMetrics, ChatHistorySession, ChatMessage } from '../types';
-import apiService from './apiService';
+// Fix: Import 'getDoc' from firebase to fix 'Cannot find name' error.
+import { db, collection, getDocs, doc, setDoc, writeBatch, query, orderBy, limit, getDoc } from './firebase';
 
 const METRICS_STORAGE_KEY = 'pizzeria-slice-bot-metrics';
 const MAX_HISTORY_SESSIONS = 100;
-const METRICS_SHEET_NAME = 'SliceBotMetrics';
-const CHAT_HISTORY_SHEET_NAME = 'ChatHistory';
+const METRICS_COLLECTION_NAME = 'SliceBotMetrics';
+const METRICS_DOC_ID = 'main';
+const CHAT_HISTORY_COLLECTION_NAME = 'ChatHistory';
 
 
 // Simple token estimation: average token is ~4 chars
@@ -49,39 +51,39 @@ const getStoredData = (): StoredData => {
 const persistData = (data: StoredData): void => {
     try {
         localStorage.setItem(METRICS_STORAGE_KEY, JSON.stringify(data));
+        
+        // Persist to Firebase (fire and forget)
+        const metricsRef = doc(db, METRICS_COLLECTION_NAME, METRICS_DOC_ID);
+        setDoc(metricsRef, data.metrics, { merge: true }).catch(e => console.error("Error syncing SliceBot metrics:", e));
+
+        if (data.chatHistory.length > 0) {
+            const latestSession = data.chatHistory[0];
+            const historyRef = doc(db, CHAT_HISTORY_COLLECTION_NAME, latestSession.id);
+            setDoc(historyRef, latestSession).catch(e => console.error("Error syncing SliceBot chat history:", e));
+        }
+
     } catch (error) {
         console.error("Failed to save slice bot metrics to localStorage", error);
     }
-
-    // Persist to Google Sheet (fire and forget)
-    apiService.post('syncDataType', {
-        sheetName: METRICS_SHEET_NAME,
-        items: [data.metrics],
-        headers: ['distinctCustomers', 'totalMessages', 'totalTokensUsed', 'ordersMade', 'reservationsMade']
-    }).catch(e => console.error("Error syncing SliceBot metrics:", e));
-
-    apiService.post('syncDataType', {
-        sheetName: CHAT_HISTORY_SHEET_NAME,
-        items: data.chatHistory,
-        headers: ['id', 'startTime', 'messages', 'outcome', 'tokensUsed', 'lastActivity']
-    }).catch(e => console.error("Error syncing SliceBot chat history:", e));
 };
 
 export const fetchAndCacheSliceBotData = async (): Promise<void> => {
     try {
-        const [metricsResponse, historyResponse] = await Promise.all([
-            apiService.get(METRICS_SHEET_NAME),
-            apiService.get(CHAT_HISTORY_SHEET_NAME)
+        const metricsRef = doc(db, METRICS_COLLECTION_NAME, METRICS_DOC_ID);
+        const historyQuery = query(collection(db, CHAT_HISTORY_COLLECTION_NAME), orderBy('startTime', 'desc'), limit(MAX_HISTORY_SESSIONS));
+
+        const [metricsSnap, historySnap] = await Promise.all([
+            getDoc(metricsRef),
+            getDocs(historyQuery)
         ]);
         
-        const metrics = (metricsResponse && metricsResponse[0]) ? metricsResponse[0] : getDefaultData().metrics;
-        const chatHistory = historyResponse || [];
+        const metrics = metricsSnap.exists() ? (metricsSnap.data() as SliceBotMetrics) : getDefaultData().metrics;
+        const chatHistory = historySnap.docs.map(doc => doc.data() as ChatHistorySession);
         
-        const data: StoredData = { metrics, chatHistory };
-        localStorage.setItem(METRICS_STORAGE_KEY, JSON.stringify(data));
+        persistData({ metrics, chatHistory });
 
     } catch (error) {
-        console.warn('Failed to fetch Slice Bot data from sheet, using local cache.', error);
+        console.warn('Failed to fetch Slice Bot data from Firebase, using local cache.', error);
     }
 };
 
@@ -158,11 +160,3 @@ export const getMetrics = (): SliceBotMetrics => {
 export const getChatHistory = (): ChatHistorySession[] => {
     return getStoredData().chatHistory;
 };
-
-export const getLocalDataForSync = () => {
-    const data = getStoredData();
-    return {
-        sliceBotMetrics: [data.metrics],
-        chatHistory: data.chatHistory
-    }
-}

@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import type { Category } from '../../types';
-// Fix: Use getCategoriesFromCache instead of getCategories
-import { getCategoriesFromCache as getCategories, addCategory, updateCategory, deleteCategory } from '../../services/categoryService';
+import { getCategoriesFromCache, addCategory, updateCategory, deleteCategory } from '../../services/categoryService';
 import { CloseIcon } from '../icons/CloseIcon';
 import { EditIcon } from '../icons/EditIcon';
 import { TrashIcon } from '../icons/TrashIcon';
@@ -25,7 +24,7 @@ const ManageCategoriesModal: React.FC<ManageCategoriesModalProps> = ({ isOpen, o
   const isEditing = !!editingCategory;
 
   const fetchCategories = () => {
-    setCategories(getCategories());
+    setCategories(getCategoriesFromCache());
   };
 
   useEffect(() => {

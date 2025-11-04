@@ -257,7 +257,7 @@ const CustomersPanel: React.FC<CustomersPanelProps> = ({ whatsAppStatus, bulkSen
     if (!file) return;
 
     const reader = new FileReader();
-    reader.onload = (e) => {
+    reader.onload = async (e) => {
         const text = e.target?.result as string;
         const lines = text.split('\n');
         const headers = lines[0].trim().split(',').map(h => h.trim());
@@ -280,7 +280,7 @@ const CustomersPanel: React.FC<CustomersPanelProps> = ({ whatsAppStatus, bulkSen
         }).filter(c => c && c.name);
 
         if (customersToImport.length > 0) {
-            const result = importCustomers(customersToImport);
+            const result = await importCustomers(customersToImport);
             setNotification({
               message: `Importación completada: ${result.added} agregados, ${result.updated} actualizados, ${result.errors} errores.`,
               type: result.errors > 0 ? 'error' : 'success'

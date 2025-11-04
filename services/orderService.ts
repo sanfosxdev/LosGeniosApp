@@ -1,13 +1,13 @@
 import { OrderStatus, OrderType, PaymentMethod, CreatedBy, type Order, type StatusHistory } from '../types';
 import { addNotification } from './notificationService';
-import apiService from './apiService';
+import { db, collection, getDocs, doc, setDoc, deleteDoc, writeBatch } from './firebase';
 
 const ORDERS_STORAGE_KEY = 'pizzeria-orders';
 const SHEET_NAME = 'Orders';
 
 let ordersCache: Order[] | null = null;
 
-const updateCaches = (orders: Order[]) => {
+export const updateCaches = (orders: Order[]) => {
     ordersCache = orders.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
     localStorage.setItem(ORDERS_STORAGE_KEY, JSON.stringify(ordersCache));
 };
@@ -45,41 +45,31 @@ export const getOrdersFromCache = (): Order[] => {
 
 export const fetchAndCacheOrders = async (): Promise<Order[]> => {
     try {
-        const orders = await apiService.get(SHEET_NAME);
-        // Data migration to ensure tableIds is always an array
-        orders.forEach((order: any) => {
-            if (typeof order.tableIds === 'string') {
-                if (order.tableIds.startsWith('[')) {
-                    try { 
-                        const parsed = JSON.parse(order.tableIds);
-                        order.tableIds = Array.isArray(parsed) ? parsed : [];
-                    } catch (e) { 
-                        order.tableIds = [];
-                    }
-                } else if (order.tableIds.trim()) {
-                    order.tableIds = order.tableIds.split(',').map(s => s.trim());
-                } else {
-                    order.tableIds = [];
-                }
-            } else if (order.tableIds && !Array.isArray(order.tableIds)) {
-                // Handle other truthy non-array types like numbers
-                order.tableIds = [String(order.tableIds)];
-            } else if (!order.tableIds) {
-                order.tableIds = [];
-            }
-        });
+        const querySnapshot = await getDocs(collection(db, SHEET_NAME));
+        
+        if (querySnapshot.empty && getOrdersFromCache().length > 0) {
+            console.log(`Firebase collection '${SHEET_NAME}' is empty. Seeding from local storage.`);
+            const localData = getOrdersFromCache();
+            const batch = writeBatch(db);
+            localData.forEach(item => {
+                const docRef = doc(db, SHEET_NAME, item.id);
+                batch.set(docRef, item);
+            });
+            await batch.commit();
+            return localData;
+        }
+
+        const orders = querySnapshot.docs.map(doc => doc.data() as Order);
         updateCaches(orders);
         return orders;
     } catch (error) {
-        console.warn('Failed to fetch orders, using local cache.', error);
+        console.warn('Failed to fetch orders from Firebase, using local cache.', error);
         return getOrdersFromCache();
     }
 };
 
 export const saveOrder = async (orderData: Omit<Order, 'id' | 'status' | 'createdAt' | 'statusHistory' | 'finishedAt' | 'isPaid'>): Promise<Order> => {
   const now = new Date().toISOString();
-  // An order is only considered paid at creation time if a payment proof is provided.
-  // Otherwise, payment is confirmed manually by an admin via markOrderAsPaid or by completing the order.
   const isPaid = !!orderData.paymentProofUrl;
 
   const newOrder: Order = {
@@ -92,10 +82,9 @@ export const saveOrder = async (orderData: Omit<Order, 'id' | 'status' | 'create
     isPaid: isPaid,
   };
   
-  updateCaches([newOrder, ...getOrdersFromCache()]);
-
   try {
-      await apiService.post('addData', { sheetName: SHEET_NAME, item: newOrder });
+      await setDoc(doc(db, SHEET_NAME, newOrder.id), newOrder);
+      updateCaches([newOrder, ...getOrdersFromCache()]);
       return newOrder;
   } catch (e) {
       throw new Error(`Error al guardar pedido en la nube: ${e instanceof Error ? e.message : String(e)}`);
@@ -108,12 +97,12 @@ export const updateOrder = async (orderUpdates: Partial<Order> & { id: string })
     if (orderIndex === -1) throw new Error("Order not found");
 
     const updatedOrder = { ...orders[orderIndex], ...orderUpdates };
-    const newCache = [...orders];
-    newCache[orderIndex] = updatedOrder;
-    updateCaches(newCache);
     
     try {
-        await apiService.post('updateData', { sheetName: SHEET_NAME, item: updatedOrder });
+        await setDoc(doc(db, SHEET_NAME, updatedOrder.id), updatedOrder);
+        const newCache = [...orders];
+        newCache[orderIndex] = updatedOrder;
+        updateCaches(newCache);
         return updatedOrder;
     } catch (e) {
         throw new Error(`Error al actualizar pedido en la nube: ${e instanceof Error ? e.message : String(e)}`);
@@ -142,15 +131,13 @@ export const updateOrderStatus = async (orderId: string, status: OrderStatus): P
         order.finishedAt = new Date().toISOString();
         if (status !== OrderStatus.CANCELLED) order.isPaid = true;
     }
-
-    const newCache = [...orders];
-    newCache[orderIndex] = order;
-    updateCaches(newCache);
     
-    addNotification({ message: `El pedido #${order.id.split('-')[1]} (${order.customer.name}) cambió a: ${status}.`, type: 'order', relatedId: order.id });
-
     try {
-        await apiService.post('updateData', { sheetName: SHEET_NAME, item: order });
+        await setDoc(doc(db, SHEET_NAME, order.id), order);
+        const newCache = [...orders];
+        newCache[orderIndex] = order;
+        updateCaches(newCache);
+        addNotification({ message: `El pedido #${order.id.split('-')[1]} (${order.customer.name}) cambió a: ${status}.`, type: 'order', relatedId: order.id });
         return order;
     } catch (e) {
         throw new Error(`Error al actualizar estado en la nube: ${e instanceof Error ? e.message : String(e)}`);
@@ -167,14 +154,12 @@ export const markOrderAsPaid = async (orderId: string, paymentMethod: PaymentMet
     order.paymentMethod = paymentMethod;
     if (paymentProofUrl !== undefined) order.paymentProofUrl = paymentProofUrl;
     
-    const newCache = [...orders];
-    newCache[orderIndex] = order;
-    updateCaches(newCache);
-
-    addNotification({ message: `Se aprobó el pago para el pedido #${orderId.split('-')[1]} de ${order.customer.name}.`, type: 'order', relatedId: orderId });
-    
     try {
-        await apiService.post('updateData', { sheetName: SHEET_NAME, item: order });
+        await setDoc(doc(db, SHEET_NAME, order.id), order);
+        const newCache = [...orders];
+        newCache[orderIndex] = order;
+        updateCaches(newCache);
+        addNotification({ message: `Se aprobó el pago para el pedido #${orderId.split('-')[1]} de ${order.customer.name}.`, type: 'order', relatedId: orderId });
         return order;
     } catch (e) {
         throw new Error(`Error al actualizar pago en la nube: ${e instanceof Error ? e.message : String(e)}`);
@@ -182,9 +167,9 @@ export const markOrderAsPaid = async (orderId: string, paymentMethod: PaymentMet
 };
 
 export const deleteOrder = async (orderId: string): Promise<void> => {
-    updateCaches(getOrdersFromCache().filter(o => o.id !== orderId));
     try {
-        await apiService.post('deleteData', { sheetName: SHEET_NAME, itemId: orderId });
+        await deleteDoc(doc(db, SHEET_NAME, orderId));
+        updateCaches(getOrdersFromCache().filter(o => o.id !== orderId));
     } catch (e) {
         throw new Error(`Error al eliminar pedido en la nube: ${e instanceof Error ? e.message : String(e)}`);
     }

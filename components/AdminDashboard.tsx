@@ -10,29 +10,26 @@ import BotsPanel from './admin/BotsPanel';
 import SettingsPanel from './admin/SettingsPanel';
 import { MenuIcon } from './icons/MenuIcon';
 import { PizzaIcon } from './icons/PizzaIcon';
-import * as notificationService from '../../services/notificationService';
-import * as whatsAppBotService from '../../services/whatsappBotService';
-import { fetchAndCacheOrders, getOrdersFromCache } from '../../services/orderService';
-import { fetchAndCacheReservations, getReservationsFromCache, fetchAndCacheReservationSettings } from '../../services/reservationService';
-import { fetchAndCacheProducts } from '../../services/productService';
-import { fetchAndCacheCategories } from '../../services/categoryService';
-import { fetchAndCachePromotions } from '../../services/promotionService';
-import { fetchAndCacheCustomerCategories } from '../../services/customerCategoryService';
-import { fetchAndCacheCustomers } from '../../services/customerService';
-import { fetchAndCacheTables } from '../../services/tableService';
-import { fetchAndCacheScheduleExceptions } from '../../services/scheduleExceptionService';
-import { fetchAndCacheSchedule } from '../../services/scheduleService';
-import { fetchAndCacheSliceBotData } from '../../services/sliceBotMetricsService';
-import { fetchAndCacheWhatsAppBotData } from '../../services/whatsappBotMetricsService';
-import { syncLocalDataToSheet } from '../../services/settingsService';
+import * as notificationService from '../services/notificationService';
+import * as whatsAppBotService from '../services/whatsappBotService';
+import { getOrdersFromCache } from '../services/orderService';
+import { getReservationsFromCache } from '../services/reservationService';
+import { db, onSnapshot, collection } from '../services/firebase';
 import NotificationCenter from './admin/NotificationCenter';
-import SyncButton from './admin/SyncButton';
-import type { Notification, WhatsAppBotStatus, BulkSendJob } from '../../types';
-import type { SliceBotStatus } from '../../services/sliceBotService';
-import { ReservationStatus } from '../../types';
-import { CloseIcon } from './icons/CloseIcon';
+import type { Notification, WhatsAppBotStatus, BulkSendJob } from '../types';
+import type { SliceBotStatus } from '../services/sliceBotService';
+import { ReservationStatus } from '../types';
 import { ToastContainer } from './admin/ToastContainer';
-import { toastService } from '../../services/toastService';
+
+import { updateCaches as updateOrdersCache } from '../services/orderService';
+import { updateCaches as updateReservationsCache } from '../services/reservationService';
+import { updateCaches as updateProductsCache } from '../services/productService';
+import { updateCaches as updateCategoriesCache } from '../services/categoryService';
+import { updateCaches as updatePromotionsCache } from '../services/promotionService';
+import { updateCaches as updateCustomerCategoriesCache } from '../services/customerCategoryService';
+import { updateCaches as updateCustomersCache } from '../services/customerService';
+import { updateCaches as updateTablesCache } from '../services/tableService';
+import { updateCaches as updateScheduleExceptionsCache } from '../services/scheduleExceptionService';
 
 
 interface AdminDashboardProps {
@@ -46,7 +43,7 @@ const FullPageLoader: React.FC = () => (
     <div className="flex h-screen w-screen justify-center items-center bg-gray-50 dark:bg-gray-900">
         <div className="text-center">
             <PizzaIcon className="w-16 h-16 text-primary mx-auto animate-bounce" />
-            <p className="text-lg font-semibold mt-4 text-gray-700 dark:text-gray-200">Cargando datos del local...</p>
+            <p className="text-lg font-semibold mt-4 text-gray-700 dark:text-gray-200">Conectando a la base de datos...</p>
         </div>
     </div>
 );
@@ -64,12 +61,6 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onGoToSite, onSliceBotS
   const [isInitialLoading, setIsInitialLoading] = useState(true);
   const lastCheckedOrder = useRef<string | null>(null);
   
-  // Sync State
-  const [syncStatus, setSyncStatus] = useState<'idle' | 'syncing' | 'success' | 'error'>('idle');
-  const [lastSyncTime, setLastSyncTime] = useState<Date | null>(null);
-  const [syncError, setSyncError] = useState<string | null>(null);
-
-
   const whatsAppStatusRef = useRef(whatsAppStatus);
   whatsAppStatusRef.current = whatsAppStatus;
 
@@ -105,117 +96,34 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onGoToSite, onSliceBotS
         setLastStatusCheck(new Date());
     }
   }, []);
-  
-  const pollDataAndCheckSystem = useCallback(async () => {
-    let isMounted = true;
-    
-    const checkSystem = () => {
-      if (!isMounted) return;
-      const currentOrders = getOrdersFromCache();
-      if (currentOrders.length > 0 && lastCheckedOrder.current && currentOrders[0].id !== lastCheckedOrder.current) {
-        notificationService.addNotification({
-          message: `Nuevo pedido de ${currentOrders[0].customer.name} por $${currentOrders[0].total.toLocaleString('es-AR')}.`,
-          type: 'order',
-          relatedId: currentOrders[0].id,
-        });
-        lastCheckedOrder.current = currentOrders[0].id;
-        refreshNotifications();
-      }
-
-      const upcomingReservations = getReservationsFromCache().filter(r => {
-        if (r.status !== ReservationStatus.CONFIRMED) return false;
-        const diffMinutes = (new Date(r.reservationTime).getTime() - Date.now()) / 60000;
-        return diffMinutes > 0 && diffMinutes <= 15;
-      });
-
-      let newNotificationAdded = false;
-      upcomingReservations.forEach(res => {
-        const added = notificationService.addNotification({
-          message: `La reserva para ${res.customerName} (${res.guests}p) comienza en menos de 15 minutos.`,
-          type: 'reservation',
-          relatedId: res.id,
-        });
-        if (added) newNotificationAdded = true;
-      });
-      
-      if (newNotificationAdded) refreshNotifications();
-    };
-
-    try {
-        await Promise.all([
-            fetchAndCacheOrders(),
-            fetchAndCacheReservations(),
-            fetchAndCacheProducts(),
-            fetchAndCacheCategories(),
-            fetchAndCachePromotions(),
-            fetchAndCacheCustomerCategories(),
-            fetchAndCacheCustomers(),
-            fetchAndCacheTables(),
-            fetchAndCacheScheduleExceptions(),
-            fetchAndCacheSliceBotData(),
-            fetchAndCacheWhatsAppBotData(),
-            fetchAndCacheReservationSettings(),
-            fetchAndCacheSchedule(),
-        ]);
-        if (isMounted) {
-            setDataTimestamp(Date.now());
-            checkSystem();
-        }
-    } catch (error) {
-        console.warn("Data polling failed:", error);
-        toastService.show('Error al actualizar datos desde la nube.', 'error');
-    }
-    
-    return () => { isMounted = false; };
-  }, [refreshNotifications]);
-  
-  const handleManualSync = async () => {
-    setSyncStatus('syncing');
-    setSyncError(null);
-    try {
-      await syncLocalDataToSheet();
-      await pollDataAndCheckSystem();
-      setLastSyncTime(new Date());
-      setSyncStatus('success');
-      toastService.show('Sincronización manual completada.', 'success');
-      setTimeout(() => setSyncStatus('idle'), 2500);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Ocurrió un error desconocido.';
-      console.error("Manual sync failed:", error);
-      setSyncStatus('error');
-      setSyncError(`Error de sincronización: ${message}`);
-      toastService.show(`Error de sincronización: ${message}`, 'error');
-      setTimeout(() => setSyncStatus('idle'), 5000);
-    }
-  };
-
 
   useEffect(() => {
-    let isMounted = true;
-    const initialLoad = async () => {
-        try {
-            await pollDataAndCheckSystem();
-            if (isMounted) {
-                const initialOrders = getOrdersFromCache();
-                if (initialOrders.length > 0) {
-                    lastCheckedOrder.current = initialOrders[0].id;
-                }
-                setLastSyncTime(new Date());
-            }
-            checkWhatsAppStatus(true);
-        } catch (error) {
-            console.error("Failed to perform initial data load:", error);
-        } finally {
-            if (isMounted) {
-                setIsInitialLoading(false);
-            }
-        }
-    };
+    const collectionsToListen = [
+      { name: 'Orders', updater: updateOrdersCache },
+      { name: 'Reservations', updater: updateReservationsCache },
+      { name: 'Products', updater: updateProductsCache },
+      { name: 'Categories', updater: updateCategoriesCache },
+      { name: 'Promotions', updater: updatePromotionsCache },
+      { name: 'CustomerCategories', updater: updateCustomerCategoriesCache },
+      { name: 'Customers', updater: updateCustomersCache },
+      { name: 'Tables', updater: updateTablesCache },
+      { name: 'ScheduleExceptions', updater: updateScheduleExceptionsCache },
+    ];
 
-    initialLoad();
-
-    const dataPollIntervalId = setInterval(pollDataAndCheckSystem, 60000 * 5); // Poll data every 5 minutes
-
+    const unsubscribers = collectionsToListen.map(({ name, updater }) => {
+      const q = collection(db, name);
+      return onSnapshot(q, (querySnapshot) => {
+        const items = querySnapshot.docs.map(doc => doc.data());
+        // @ts-ignore
+        updater(items);
+        setDataTimestamp(Date.now());
+        if (isInitialLoading) setIsInitialLoading(false);
+      }, (error) => {
+        console.error(`Error listening to ${name}:`, error);
+        setIsInitialLoading(false);
+      });
+    });
+    
     let whatsAppPollIntervalId: number | undefined;
     const whatsAppIntervalDuration = activePanel === 'bots' ? 15000 : (whatsAppStatus === 'active' ? 30000 : 0);
     if (whatsAppIntervalDuration > 0) {
@@ -223,28 +131,45 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onGoToSite, onSliceBotS
     }
 
     return () => {
-      isMounted = false;
-      clearInterval(dataPollIntervalId);
+      unsubscribers.forEach(unsub => unsub());
       if (whatsAppPollIntervalId) clearInterval(whatsAppPollIntervalId);
     };
-  }, [activePanel, whatsAppStatus, checkWhatsAppStatus, pollDataAndCheckSystem]);
-  
+  }, [isInitialLoading, activePanel, whatsAppStatus, checkWhatsAppStatus]);
+
   useEffect(() => {
-    const handleStorageUpdate = (event: StorageEvent) => {
-        // When 'pizzeria-data-updated' is set in another tab, refresh data.
-        if (event.key === 'pizzeria-data-updated') {
-            toastService.show('Nuevos datos disponibles. Actualizando...', 'info');
-            pollDataAndCheckSystem();
-        }
-    };
+    const currentOrders = getOrdersFromCache();
+    if (currentOrders.length > 0 && lastCheckedOrder.current && currentOrders[0].id !== lastCheckedOrder.current) {
+      notificationService.addNotification({
+        message: `Nuevo pedido de ${currentOrders[0].customer.name} por $${currentOrders[0].total.toLocaleString('es-AR')}.`,
+        type: 'order',
+        relatedId: currentOrders[0].id,
+      });
+      refreshNotifications();
+    }
+    if(currentOrders.length > 0) {
+      lastCheckedOrder.current = currentOrders[0].id;
+    }
 
-    window.addEventListener('storage', handleStorageUpdate);
+    const upcomingReservations = getReservationsFromCache().filter(r => {
+      if (r.status !== ReservationStatus.CONFIRMED) return false;
+      const diffMinutes = (new Date(r.reservationTime).getTime() - Date.now()) / 60000;
+      return diffMinutes > 0 && diffMinutes <= 15;
+    });
 
-    return () => {
-        window.removeEventListener('storage', handleStorageUpdate);
-    };
-  }, [pollDataAndCheckSystem]);
+    let newNotificationAdded = false;
+    upcomingReservations.forEach(res => {
+      const added = notificationService.addNotification({
+        message: `La reserva para ${res.customerName} (${res.guests}p) comienza en menos de 15 minutos.`,
+        type: 'reservation',
+        relatedId: res.id,
+      });
+      if (added) newNotificationAdded = true;
+    });
+    
+    if (newNotificationAdded) refreshNotifications();
 
+  }, [dataTimestamp, refreshNotifications]);
+  
   const unreadCount = notifications.filter(n => !n.isRead).length;
 
   const handleMarkAsRead = (id: string) => {
@@ -266,14 +191,6 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onGoToSite, onSliceBotS
     notificationService.clearAllNotifications();
     refreshNotifications();
   };
-  
-  const syncComponent = (
-    <SyncButton
-      status={syncStatus}
-      lastSyncTime={lastSyncTime}
-      onSync={handleManualSync}
-    />
-  );
   
   const notificationCenterComponent = (
      <NotificationCenter
@@ -345,7 +262,6 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onGoToSite, onSliceBotS
                 <span className="text-lg font-bold font-display text-dark dark:text-light">Panel Admin</span>
             </div>
             <div className="flex items-center gap-2">
-              {syncComponent}
               {notificationCenterComponent}
             </div>
         </header>
@@ -353,19 +269,13 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onGoToSite, onSliceBotS
          {/* Desktop Header */}
         <header className="hidden lg:flex bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 p-4 justify-end items-center">
             <div className="flex items-center gap-4">
-                {syncComponent}
+              <div className="flex items-center gap-2 text-sm text-green-600 dark:text-green-400">
+                  <div className="w-3 h-3 bg-green-500 rounded-full animate-pulse"></div>
+                  <span>Conectado en tiempo real</span>
+                </div>
                 {notificationCenterComponent}
             </div>
         </header>
-        
-        {syncError && (
-          <div className="relative bg-red-100 dark:bg-red-900/50 border-b border-red-300 dark:border-red-700 text-red-800 dark:text-red-200 px-4 py-2 text-sm text-center">
-            <span>{syncError}</span>
-            <button onClick={() => setSyncError(null)} className="absolute top-1/2 right-3 -translate-y-1/2 p-1">
-              <CloseIcon className="w-4 h-4" />
-            </button>
-          </div>
-        )}
 
         <main className="flex-1 p-4 sm:p-6 md:p-8 overflow-y-auto">
             {renderPanel()}
