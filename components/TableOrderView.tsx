@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import type { Order, Table, Product, Category, Promotion, OrderItem } from '../../types';
-import { OrderType, CreatedBy, OrderStatus, PaymentMethod } from '../../types';
+// FIX: Import missing enums
+import { OrderStatus, OrderType, CreatedBy, PaymentMethod } from '../types';
+import type { Order, Table, Product, Category, Promotion, OrderItem } from '../types';
 import { getEnrichedTableById, getTablesFromCache, fetchAndCacheTables } from '../services/tableService';
 import { getOrdersFromCache, saveOrder, updateOrder, updateOrderStatus, fetchAndCacheOrders } from '../services/orderService';
 import { getReservationsFromCache, fetchAndCacheReservations } from '../services/reservationService';
