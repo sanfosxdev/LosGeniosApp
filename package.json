@@ -16,7 +16,9 @@
     "qrcode": "^1.5.3",
     "react-dom": "^19.1.1",
     "@netlify/functions": "^4.2.5",
-    "firebase": "^12.5.0"
+    "firebase": "^12.5.0",
+    "@firebase/app": "^0.14.5",
+    "@firebase/firestore": "^4.9.2"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",

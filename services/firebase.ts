@@ -1,4 +1,6 @@
-import { initializeApp } from 'firebase/app';
+// Fix: Changed 'firebase/app' to '@firebase/app' to resolve module export errors that can occur with certain bundler configurations.
+import { initializeApp, getApp, getApps } from '@firebase/app';
+// Fix: Changed 'firebase/firestore' to '@firebase/firestore' for consistency.
 import { 
     getFirestore, 
     collection, 
@@ -17,7 +19,7 @@ import {
     limit,
     serverTimestamp,
     Timestamp,
-} from 'firebase/firestore';
+} from '@firebase/firestore';
 
 // Your web app's Firebase configuration should be in environment variables
 // (e.g., a .env file if you are using a bundler like Vite)
@@ -29,10 +31,11 @@ const firebaseConfig = {
   storageBucket: process.env.VITE_FIREBASE_STORAGE_BUCKET,
   messagingSenderId: process.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
   appId: process.env.VITE_FIREBASE_APP_ID,
+  
 };
 
-// Initialize Firebase
-const app = initializeApp(firebaseConfig);
+// Initialize Firebase using v9 modular style, ensuring it's only done once.
+const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
 const db = getFirestore(app);
 
 export { 

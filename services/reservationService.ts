@@ -15,6 +15,17 @@ const SHEET_NAME = 'Reservations';
 
 let reservationsCache: Reservation[] | null = null;
 
+// Helper function to remove undefined properties from an object
+const cleanUndefined = (obj: any) => {
+  const newObj = { ...obj };
+  Object.keys(newObj).forEach(key => {
+    if (newObj[key] === undefined) {
+      delete newObj[key];
+    }
+  });
+  return newObj;
+};
+
 export const updateCaches = (reservations: Reservation[]) => {
     reservationsCache = reservations.sort((a, b) => new Date(a.reservationTime).getTime() - new Date(b.reservationTime).getTime());
     localStorage.setItem(RESERVATIONS_STORAGE_KEY, JSON.stringify(reservationsCache));
@@ -130,7 +141,7 @@ export const addReservation = async (reservationData: Omit<Reservation, 'id' | '
     };
     
     try {
-        await setDoc(doc(db, SHEET_NAME, newReservation.id), newReservation);
+        await setDoc(doc(db, SHEET_NAME, newReservation.id), cleanUndefined(newReservation));
         updateCaches([newReservation, ...getReservationsFromCache()]);
         return newReservation;
     } catch (e) {
@@ -140,7 +151,7 @@ export const addReservation = async (reservationData: Omit<Reservation, 'id' | '
 
 export const updateReservation = async (updatedReservation: Reservation): Promise<Reservation> => {
     try {
-        await setDoc(doc(db, SHEET_NAME, updatedReservation.id), updatedReservation);
+        await setDoc(doc(db, SHEET_NAME, updatedReservation.id), cleanUndefined(updatedReservation));
         const reservations = getReservationsFromCache();
         const reservationIndex = reservations.findIndex(r => r.id === updatedReservation.id);
         if (reservationIndex !== -1) {
@@ -180,7 +191,7 @@ export const updateReservationStatus = async (reservationId: string, status: Res
     addNotification({ message: `La reserva de ${reservation.customerName} cambió a: ${status}.`, type: 'reservation', relatedId: reservation.id });
     
     try {
-        await setDoc(doc(db, SHEET_NAME, reservation.id), reservation);
+        await setDoc(doc(db, SHEET_NAME, reservation.id), cleanUndefined(reservation));
         const newCache = [...reservations];
         newCache[reservationIndex] = reservation;
         updateCaches(newCache);

@@ -7,6 +7,17 @@ const SHEET_NAME = 'Orders';
 
 let ordersCache: Order[] | null = null;
 
+// Helper function to remove undefined properties from an object
+const cleanUndefined = (obj: any) => {
+  const newObj = { ...obj };
+  Object.keys(newObj).forEach(key => {
+    if (newObj[key] === undefined) {
+      delete newObj[key];
+    }
+  });
+  return newObj;
+};
+
 export const updateCaches = (orders: Order[]) => {
     ordersCache = orders.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
     localStorage.setItem(ORDERS_STORAGE_KEY, JSON.stringify(ordersCache));
@@ -83,7 +94,7 @@ export const saveOrder = async (orderData: Omit<Order, 'id' | 'status' | 'create
   };
   
   try {
-      await setDoc(doc(db, SHEET_NAME, newOrder.id), newOrder);
+      await setDoc(doc(db, SHEET_NAME, newOrder.id), cleanUndefined(newOrder));
       updateCaches([newOrder, ...getOrdersFromCache()]);
       return newOrder;
   } catch (e) {
@@ -99,7 +110,7 @@ export const updateOrder = async (orderUpdates: Partial<Order> & { id: string })
     const updatedOrder = { ...orders[orderIndex], ...orderUpdates };
     
     try {
-        await setDoc(doc(db, SHEET_NAME, updatedOrder.id), updatedOrder);
+        await setDoc(doc(db, SHEET_NAME, updatedOrder.id), cleanUndefined(updatedOrder));
         const newCache = [...orders];
         newCache[orderIndex] = updatedOrder;
         updateCaches(newCache);
@@ -133,7 +144,7 @@ export const updateOrderStatus = async (orderId: string, status: OrderStatus): P
     }
     
     try {
-        await setDoc(doc(db, SHEET_NAME, order.id), order);
+        await setDoc(doc(db, SHEET_NAME, order.id), cleanUndefined(order));
         const newCache = [...orders];
         newCache[orderIndex] = order;
         updateCaches(newCache);
@@ -155,7 +166,7 @@ export const markOrderAsPaid = async (orderId: string, paymentMethod: PaymentMet
     if (paymentProofUrl !== undefined) order.paymentProofUrl = paymentProofUrl;
     
     try {
-        await setDoc(doc(db, SHEET_NAME, order.id), order);
+        await setDoc(doc(db, SHEET_NAME, order.id), cleanUndefined(order));
         const newCache = [...orders];
         newCache[orderIndex] = order;
         updateCaches(newCache);
