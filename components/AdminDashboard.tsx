@@ -3,6 +3,7 @@ import AdminSidebar from './admin/AdminSidebar';
 import OrdersPanel from './admin/OrdersPanel';
 import ProductsPanel from './admin/ProductsPanel';
 import CustomersPanel from './admin/CustomersPanel';
+import UsersPanel from './admin/UsersPanel';
 import SchedulePanel from './admin/SchedulePanel';
 import ReservationsPanel from './admin/ReservationsPanel';
 import TablesPanel from './admin/TablesPanel';
@@ -14,30 +15,32 @@ import * as notificationService from '../services/notificationService';
 import * as whatsAppBotService from '../services/whatsappBotService';
 import { getOrdersFromCache } from '../services/orderService';
 import { getReservationsFromCache } from '../services/reservationService';
-import { db, onSnapshot, collection } from '../services/firebase';
+import { db, onSnapshot, collection, doc } from '../services/firebase';
 import NotificationCenter from './admin/NotificationCenter';
-import type { Notification, WhatsAppBotStatus, BulkSendJob } from '../types';
+import type { Notification, WhatsAppBotStatus, BulkSendJob, Schedule, ReservationSettings, SliceBotMetrics, ChatHistorySession, AdminPanel } from '../types';
 import type { SliceBotStatus } from '../services/sliceBotService';
 import { ReservationStatus } from '../types';
+import { CloseIcon } from './icons/CloseIcon';
 import { ToastContainer } from './admin/ToastContainer';
 
 import { updateCaches as updateOrdersCache } from '../services/orderService';
-import { updateCaches as updateReservationsCache } from '../services/reservationService';
+import { updateCaches as updateReservationsCache, updateSettingsCache } from '../services/reservationService';
 import { updateCaches as updateProductsCache } from '../services/productService';
 import { updateCaches as updateCategoriesCache } from '../services/categoryService';
 import { updateCaches as updatePromotionsCache } from '../services/promotionService';
 import { updateCaches as updateCustomerCategoriesCache } from '../services/customerCategoryService';
 import { updateCaches as updateCustomersCache } from '../services/customerService';
+import { updateCaches as updateUsersCache } from '../services/userService';
 import { updateCaches as updateTablesCache } from '../services/tableService';
 import { updateCaches as updateScheduleExceptionsCache } from '../services/scheduleExceptionService';
+import { updateCaches as updateScheduleCache } from '../services/scheduleService';
+import { updateMetricsCache, updateChatHistoryCache } from '../services/sliceBotMetricsService';
 
 
 interface AdminDashboardProps {
   onGoToSite: () => void;
   onSliceBotStatusChange: (newStatus: SliceBotStatus) => void;
 }
-
-type AdminPanel = 'orders' | 'products' | 'customers' | 'schedule' | 'reservations' | 'tables' | 'bots' | 'settings';
 
 const FullPageLoader: React.FC = () => (
     <div className="flex h-screen w-screen justify-center items-center bg-gray-50 dark:bg-gray-900">
@@ -106,8 +109,10 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onGoToSite, onSliceBotS
       { name: 'Promotions', updater: updatePromotionsCache },
       { name: 'CustomerCategories', updater: updateCustomerCategoriesCache },
       { name: 'Customers', updater: updateCustomersCache },
+      { name: 'Users', updater: updateUsersCache },
       { name: 'Tables', updater: updateTablesCache },
       { name: 'ScheduleExceptions', updater: updateScheduleExceptionsCache },
+      { name: 'ChatHistory', updater: updateChatHistoryCache },
     ];
 
     const unsubscribers = collectionsToListen.map(({ name, updater }) => {
@@ -123,6 +128,32 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onGoToSite, onSliceBotS
         setIsInitialLoading(false);
       });
     });
+
+    // Listeners for single documents
+    const scheduleDocRef = doc(db, 'Schedule', 'main');
+    const settingsDocRef = doc(db, 'ReservationSettings', 'main');
+    const sliceMetricsDocRef = doc(db, 'SliceBotMetrics', 'main');
+
+    const unsubSchedule = onSnapshot(scheduleDocRef, (docSnap) => {
+      if (docSnap.exists()) {
+        updateScheduleCache(docSnap.data() as Schedule);
+        setDataTimestamp(Date.now());
+      }
+    }, (error) => console.error("Error listening to Schedule:", error));
+
+    const unsubSettings = onSnapshot(settingsDocRef, (docSnap) => {
+      if (docSnap.exists()) {
+        updateSettingsCache(docSnap.data() as ReservationSettings);
+        setDataTimestamp(Date.now());
+      }
+    }, (error) => console.error("Error listening to ReservationSettings:", error));
+    
+    const unsubSliceMetrics = onSnapshot(sliceMetricsDocRef, (docSnap) => {
+      if (docSnap.exists()) {
+        updateMetricsCache(docSnap.data() as SliceBotMetrics);
+        setDataTimestamp(Date.now());
+      }
+    }, (error) => console.error("Error listening to SliceBotMetrics:", error));
     
     let whatsAppPollIntervalId: number | undefined;
     const whatsAppIntervalDuration = activePanel === 'bots' ? 15000 : (whatsAppStatus === 'active' ? 30000 : 0);
@@ -132,6 +163,9 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onGoToSite, onSliceBotS
 
     return () => {
       unsubscribers.forEach(unsub => unsub());
+      unsubSchedule();
+      unsubSettings();
+      unsubSliceMetrics();
       if (whatsAppPollIntervalId) clearInterval(whatsAppPollIntervalId);
     };
   }, [isInitialLoading, activePanel, whatsAppStatus, checkWhatsAppStatus]);
@@ -216,8 +250,10 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onGoToSite, onSliceBotS
                   setBulkSendJob={setBulkSendJob}
                   dataTimestamp={dataTimestamp}
                 />;
+      case 'users':
+        return <UsersPanel dataTimestamp={dataTimestamp} />;
       case 'schedule':
-        return <SchedulePanel />;
+        return <SchedulePanel dataTimestamp={dataTimestamp} />;
       case 'reservations':
         return <ReservationsPanel onRefreshNotifications={refreshNotifications} dataTimestamp={dataTimestamp} />;
       case 'tables':

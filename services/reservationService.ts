@@ -1,7 +1,6 @@
 import type { Reservation, Table, ReservationCancellationReason, ReservationSettings, StatusHistory } from '../types';
 import { ReservationStatus, CreatedBy, OrderType, ExceptionType } from '../types';
 import { getScheduleFromCache } from './scheduleService';
-import { getTablesFromCache } from './tableService';
 import { getOrdersFromCache, isOrderFinished } from './orderService';
 import { getScheduleExceptionsFromCache } from './scheduleExceptionService';
 import { addNotification } from './notificationService';
@@ -66,9 +65,18 @@ export const getReservationSettings = (): ReservationSettings => {
   }
 };
 
+export const updateSettingsCache = (settings: ReservationSettings): void => {
+  try {
+    const currentSettings = getReservationSettings();
+    localStorage.setItem(RESERVATION_SETTINGS_STORAGE_KEY, JSON.stringify({ ...currentSettings, ...settings }));
+  } catch (error) {
+    console.error("Failed to save reservation settings to localStorage", error);
+  }
+};
+
 export const saveReservationSettings = async (settings: ReservationSettings): Promise<void> => {
   try {
-    localStorage.setItem(RESERVATION_SETTINGS_STORAGE_KEY, JSON.stringify(settings));
+    updateSettingsCache(settings);
     await setDoc(doc(db, RESERVATION_SETTINGS_SHEET_NAME, RESERVATION_SETTINGS_DOC_ID), settings);
   } catch (error) {
     console.error("Failed to save reservation settings", error);
@@ -244,8 +252,7 @@ const getAvailableTablesAtTime = (time: Date, allTables: Table[], allReservation
     );
 };
 
-export const findAvailableTables = (time: Date, guests: number, reservationToIgnoreId?: string): string[] | null => {
-    const allTables = getTablesFromCache();
+export const findAvailableTables = (allTables: Table[], time: Date, guests: number, reservationToIgnoreId?: string): string[] | null => {
     const allReservations = getReservationsFromCache();
     const availableTables = getAvailableTablesAtTime(time, allTables, allReservations, reservationToIgnoreId);
     
@@ -264,7 +271,7 @@ export const findAvailableTables = (time: Date, guests: number, reservationToIgn
     return currentCapacity >= guests ? selectedTables.map(t => t.id) : null;
 };
 
-export const getAvailability = (date: Date, guests: number): string[] => {
+export const getAvailability = (allTables: Table[], date: Date, guests: number): string[] => {
     const schedule = getScheduleFromCache();
     const dayNames = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
     const dayName = dayNames[date.getDay()];
@@ -284,8 +291,8 @@ export const getAvailability = (date: Date, guests: number): string[] => {
     const availableSlots: string[] = [];
     if (!daySchedule || !daySchedule.isOpen || guests <= 0) return availableSlots;
 
-    const allTables = getTablesFromCache().filter(t => t.allowsReservations);
-    if (allTables.length === 0) return availableSlots;
+    const reservableTables = allTables.filter(t => t.allowsReservations);
+    if (reservableTables.length === 0) return availableSlots;
 
     const settings = getReservationSettings();
     const now = new Date();
@@ -302,7 +309,7 @@ export const getAvailability = (date: Date, guests: number): string[] => {
                 currentTime = new Date(currentTime.getTime() + settings.slotInterval * 60 * 1000);
                 continue;
             }
-            if (findAvailableTables(currentTime, guests)) {
+            if (findAvailableTables(reservableTables, currentTime, guests)) {
                 availableSlots.push(currentTime.toTimeString().slice(0, 5));
             }
             currentTime = new Date(currentTime.getTime() + settings.slotInterval * 60 * 1000);

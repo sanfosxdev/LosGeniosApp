@@ -1,7 +1,6 @@
 import type { Table, EnrichedTable, Order, Reservation } from '../types';
 import { OrderType, ReservationStatus } from '../types';
 import { getOrdersFromCache, isOrderFinished } from './orderService';
-import { getReservationsFromCache } from './reservationService';
 import { db, collection, getDocs, doc, setDoc, deleteDoc, writeBatch } from './firebase';
 
 const TABLES_STORAGE_KEY = 'pizzeria-tables';
@@ -195,23 +194,19 @@ export const enrichTables = (tables: Table[], orders: Order[], reservations: Res
     });
 };
 
-export const getEnrichedTableById = (tableId: string): EnrichedTable | null => {
+export const getEnrichedTableById = (tableId: string, allOrders: Order[], allReservations: Reservation[]): EnrichedTable | null => {
     const allTables = getTablesFromCache();
     const table = allTables.find(t => t.id === tableId);
     if (!table) return null;
-
-    const allOrders = getOrdersFromCache();
-    const allReservations = getReservationsFromCache();
     
     const enriched = enrichTables([table], allOrders, allReservations);
     return enriched[0] || null;
 }
 
 // Functions below use cache for synchronous performance in UI logic
-export const getAvailableTablesForDineIn = (reservationToIgnoreId?: string): Table[] => {
+export const getAvailableTablesForDineIn = (allReservations: Reservation[], reservationToIgnoreId?: string): Table[] => {
     const allTables = getTablesFromCache();
     const allOrders = getOrdersFromCache();
-    const allReservations = getReservationsFromCache();
     const now = new Date();
     const blockWindowEnd = new Date(now.getTime() + 60 * 60 * 1000);
 

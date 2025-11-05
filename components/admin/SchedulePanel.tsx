@@ -7,7 +7,11 @@ import { SettingsIcon } from '../icons/SettingsIcon';
 import ManageExceptionsModal from './ManageExceptionsModal';
 import { CloseIcon } from '../icons/CloseIcon';
 
-const SchedulePanel: React.FC = () => {
+interface SchedulePanelProps {
+  dataTimestamp: number;
+}
+
+const SchedulePanel: React.FC<SchedulePanelProps> = ({ dataTimestamp }) => {
     const [schedule, setSchedule] = useState<Schedule | null>(null);
     const [isLoading, setIsLoading] = useState(true);
     const [isSaving, setIsSaving] = useState(false);
@@ -19,7 +23,7 @@ const SchedulePanel: React.FC = () => {
         const loadedSchedule = getSchedule();
         setSchedule(loadedSchedule);
         setIsLoading(false);
-    }, []);
+    }, [dataTimestamp]);
     
     const handleToggleOpen = (day: string) => {
         if (!schedule) return;

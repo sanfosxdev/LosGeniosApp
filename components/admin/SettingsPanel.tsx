@@ -5,7 +5,7 @@ import { TrashIcon } from '../icons/TrashIcon';
 
 const SettingsPanel: React.FC = () => {
     
-    const firebaseProjectId = import.meta.env.VITE_FIREBASE_APP_ID;
+    const firebaseProjectId = "geniosapp-69829";
 
     const handleClearLocalData = () => {
         if (window.confirm('¿Estás seguro de que quieres borrar todos los datos locales? Esto cerrará tu sesión en el panel y forzará una recarga completa de los datos desde Firebase. No se borrarán datos de la base de datos.')) {
@@ -29,12 +29,10 @@ const SettingsPanel: React.FC = () => {
                     <p className="text-gray-700 dark:text-gray-300">
                         Los datos se sincronizan en tiempo real. No se requiere configuración manual aquí.
                     </p>
-                    {firebaseProjectId && (
-                        <div className="bg-gray-100 dark:bg-gray-700 p-3 rounded-md">
-                            <p className="text-sm text-gray-600 dark:text-gray-400">ID del Proyecto de Firebase:</p>
-                            <p className="font-mono font-semibold text-primary">{firebaseProjectId}</p>
-                        </div>
-                    )}
+                    <div className="bg-gray-100 dark:bg-gray-700 p-3 rounded-md">
+                        <p className="text-sm text-gray-600 dark:text-gray-400">ID del Proyecto de Firebase:</p>
+                        <p className="font-mono font-semibold text-primary">{firebaseProjectId}</p>
+                    </div>
                 </div>
             </div>
 

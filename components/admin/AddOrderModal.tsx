@@ -5,6 +5,7 @@ import { getProductsFromCache as getProducts } from '../../services/productServi
 import { getPromotionsFromCache as getPromotions } from '../../services/promotionService';
 import { getTablesFromCache as getTables, getAvailableTablesForDineIn } from '../../services/tableService';
 import { getCustomersFromCache as getCustomers } from '../../services/customerService';
+import { getReservationsFromCache } from '../../services/reservationService';
 import { CloseIcon } from '../icons/CloseIcon';
 import { PlusIcon } from '../icons/PlusIcon';
 import { TrashIcon } from '../icons/TrashIcon';
@@ -19,6 +20,7 @@ interface AddOrderModalProps {
   preselectedTableIds?: string[] | null;
   reservationToConvert?: Reservation | null;
   isSaving?: boolean;
+  isStoreOpen?: boolean;
 }
 
 const fileToDataUrl = (file: File): Promise<string> => {
@@ -58,7 +60,7 @@ const findTableCombination = (availableTables: Table[], guests: number): Table[]
     return null; // No combination found
 }
 
-const AddOrderModal: React.FC<AddOrderModalProps> = ({ isOpen, onClose, onSave, orderToEdit, preselectedTableIds, reservationToConvert, isSaving }) => {
+const AddOrderModal: React.FC<AddOrderModalProps> = ({ isOpen, onClose, onSave, orderToEdit, preselectedTableIds, reservationToConvert, isSaving, isStoreOpen = true }) => {
   // State variables
   const [customer, setCustomer] = useState<{ name: string; phone?: string; address?: string; }>({ name: '', phone: '', address: '' });
   const [items, setItems] = useState<OrderItem[]>([]);
@@ -227,6 +229,12 @@ const AddOrderModal: React.FC<AddOrderModalProps> = ({ isOpen, onClose, onSave, 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setSubmissionError(null);
+
+    if (!isEditing && !isStoreOpen) {
+      setSubmissionError('No se pueden crear pedidos nuevos mientras el local está cerrado.');
+      return;
+    }
+
     if (!isConvertingReservation && orderType !== OrderType.DINE_IN && !customer.name) {
       setSubmissionError('Por favor, ingresa el nombre del cliente.');
       return;
@@ -236,9 +244,11 @@ const AddOrderModal: React.FC<AddOrderModalProps> = ({ isOpen, onClose, onSave, 
       return;
     }
 
+    const allReservations = getReservationsFromCache();
+    
     // Check for reservation conversion
     if (isConvertingReservation && reservationToConvert) {
-        const availableTables = getAvailableTablesForDineIn(reservationToConvert.id);
+        const availableTables = getAvailableTablesForDineIn(allReservations, reservationToConvert.id);
         const availableTableIds = new Set(availableTables.map(t => t.id));
         const allReservedTablesAreAvailable = reservationToConvert.tableIds.every(id => availableTableIds.has(id));
 
@@ -250,7 +260,7 @@ const AddOrderModal: React.FC<AddOrderModalProps> = ({ isOpen, onClose, onSave, 
     
     // Check for pre-selected tables from TablesPanel
     if (!isEditing && !isConvertingReservation && preselectedTableIds && preselectedTableIds.length > 0) {
-        const availableTables = getAvailableTablesForDineIn();
+        const availableTables = getAvailableTablesForDineIn(allReservations);
         const availableTableIds = new Set(availableTables.map(t => t.id));
         const allPreselectedTablesAreAvailable = preselectedTableIds.every(id => availableTableIds.has(id));
 
@@ -266,7 +276,7 @@ const AddOrderModal: React.FC<AddOrderModalProps> = ({ isOpen, onClose, onSave, 
             setSubmissionError('El número de comensales debe ser mayor a 0.');
             return;
         }
-        const availableTables = getAvailableTablesForDineIn();
+        const availableTables = getAvailableTablesForDineIn(allReservations);
         const foundCombination = findTableCombination(availableTables, guests);
         if (!foundCombination) {
             setSubmissionError('No hay mesas disponibles para el número de comensales especificado.');
@@ -319,6 +329,12 @@ const AddOrderModal: React.FC<AddOrderModalProps> = ({ isOpen, onClose, onSave, 
         </header>
         <form onSubmit={handleSubmit} className="flex-grow overflow-y-auto">
           <div className="p-6 space-y-6">
+            
+            {!isEditing && !isStoreOpen && (
+                <div className="p-3 mb-2 rounded-md bg-yellow-100 border border-yellow-300 text-yellow-800 text-sm font-semibold text-center">
+                    <strong>Atención:</strong> El local está actualmente cerrado. No se pueden crear nuevos pedidos.
+                </div>
+            )}
             
             {/* 1. Delivery Method */}
             <fieldset className="border dark:border-gray-600 p-4 rounded-md">
@@ -473,7 +489,7 @@ const AddOrderModal: React.FC<AddOrderModalProps> = ({ isOpen, onClose, onSave, 
           <footer className="flex justify-end items-center p-5 border-t dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 rounded-b-lg sticky bottom-0">
             {submissionError && <p className="text-sm text-red-600 dark:text-red-400 mr-auto">{submissionError}</p>}
             <button type="button" onClick={onClose} className="px-4 py-2 border border-gray-300 dark:border-gray-500 rounded-md text-sm font-medium text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700">Cancelar</button>
-            <button type="submit" disabled={isSaving} className="ml-3 px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-primary hover:bg-red-700 min-w-[150px] flex justify-center items-center disabled:opacity-50">
+            <button type="submit" disabled={isSaving || (!isEditing && !isStoreOpen)} className="ml-3 px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-primary hover:bg-red-700 min-w-[150px] flex justify-center items-center disabled:opacity-50 disabled:bg-gray-400">
               {isSaving ? <Spinner /> : (isEditing ? 'Guardar Cambios' : 'Guardar Pedido')}
             </button>
           </footer>

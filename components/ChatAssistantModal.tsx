@@ -8,11 +8,12 @@ import { MicrophoneIcon } from './icons/MicrophoneIcon';
 import { UploadCloudIcon } from './icons/UploadCloudIcon';
 import type { ChatMessage } from '../types';
 import { MessageSender, CreatedBy } from '../types';
-import { createChatSession, transcribeAudio, type CustomChat } from '../services/geminiService';
+import { sendMessageToGemini, transcribeAudio } from '../services/geminiService';
 import { saveOrder } from '../services/orderService';
 import { addReservation, findAvailableTables, getAvailability } from '../services/reservationService';
 import { isBusinessOpen } from '../services/scheduleService';
 import * as sliceBotMetricsService from '../services/sliceBotMetricsService';
+import { getTablesFromCache } from '../services/tableService';
 
 interface ChatAssistantModalProps {
   isOpen: boolean;
@@ -33,7 +34,6 @@ const ChatAssistantModal: React.FC<ChatAssistantModalProps> = ({ isOpen, onClose
   const [actionLock, setActionLock] = useState<'order' | 'reservation' | null>(null);
   const [isSessionCompleted, setIsSessionCompleted] = useState(false);
   
-  const chatRef = useRef<CustomChat | null>(null);
   const sessionRef = useRef<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -82,7 +82,6 @@ const ChatAssistantModal: React.FC<ChatAssistantModalProps> = ({ isOpen, onClose
     localStorage.removeItem(CHAT_SESSION_COMPLETED_KEY);
     setActionLock(null);
     setIsSessionCompleted(false);
-    chatRef.current = null;
     sessionRef.current = null;
 
     if (showGreeting) {
@@ -90,7 +89,6 @@ const ChatAssistantModal: React.FC<ChatAssistantModalProps> = ({ isOpen, onClose
         try {
             sessionRef.current = sliceBotMetricsService.startSession();
             localStorage.setItem(CHAT_SESSION_ID_KEY, sessionRef.current);
-            chatRef.current = createChatSession();
             const initialMessageText = isBusinessOpen()
                 ? '¡Bienvenido a Pizzería Los Genios! Soy Slice, tu asistente virtual. ¿Te gustaría hacer un pedido o una reserva?'
                 : '¡Hola! Bienvenido a Pizzería Los Genios. Actualmente estamos cerrados para pedidos, pero puedo ayudarte a hacer una reserva para cuando abramos. ¿Te gustaría?';
@@ -129,7 +127,6 @@ const ChatAssistantModal: React.FC<ChatAssistantModalProps> = ({ isOpen, onClose
           setMessages(loadedMessages);
           setActionLock(loadedLock);
           setIsSessionCompleted(loadedCompleted);
-          chatRef.current = createChatSession(loadedMessages, loadedLock);
         } else {
           resetChat(true);
         }
@@ -165,7 +162,7 @@ const ChatAssistantModal: React.FC<ChatAssistantModalProps> = ({ isOpen, onClose
   }, []);
 
   const handleSendMessage = useCallback(async (text: string) => {
-    if (!text.trim() || !chatRef.current || isSessionCompleted) return;
+    if (!text.trim() || isSessionCompleted) return;
 
     if (!sessionRef.current) {
         console.error("Chat session is missing. Resetting chat.");
@@ -176,28 +173,27 @@ const ChatAssistantModal: React.FC<ChatAssistantModalProps> = ({ isOpen, onClose
     
     const userMessage: ChatMessage = { sender: MessageSender.USER, text };
     
-    let newActionLock = actionLock;
+    let currentActionLock = actionLock;
     // This is the first user message of a new session
     if (!actionLock && messages.length === 1) { 
         const userText = text.toLowerCase();
         if (userText.includes('pedido') || userText.includes('ordenar') || userText.includes('pizza') || userText.includes('comprar')) {
-            newActionLock = 'order';
+            currentActionLock = 'order';
         } else if (userText.includes('reserva') || userText.includes('mesa') || userText.includes('lugar')) {
-            newActionLock = 'reservation';
+            currentActionLock = 'reservation';
         }
-        if(newActionLock) {
-            setActionLock(newActionLock);
-            // Re-create chat session with the lock for the new system prompt
-            chatRef.current = createChatSession([...messages, userMessage], newActionLock);
+        if(currentActionLock) {
+            setActionLock(currentActionLock);
         }
     }
     
-    setMessages(prev => [...prev, userMessage]);
+    const newHistory = [...messages, userMessage];
+    setMessages(newHistory);
     sliceBotMetricsService.logMessage(sessionId, userMessage);
     setIsLoading(true);
 
     try {
-      const response = await chatRef.current.sendMessage({ message: text });
+      const response = await sendMessageToGemini(newHistory, currentActionLock);
       const botResponseText = response.text;
 
       const jsonRegex = /```json\s*([\s\S]*?)\s*```/;
@@ -224,8 +220,9 @@ const ChatAssistantModal: React.FC<ChatAssistantModalProps> = ({ isOpen, onClose
                     setIsLoading(false);
                     return;
                 }
-
-                const availableTableIds = findAvailableTables(reservationTime, guests);
+                
+                const allTables = getTablesFromCache();
+                const availableTableIds = findAvailableTables(allTables, reservationTime, guests);
 
                 if (availableTableIds) {
                     addReservation({
@@ -241,7 +238,7 @@ const ChatAssistantModal: React.FC<ChatAssistantModalProps> = ({ isOpen, onClose
                     handleActionSuccess(`¡Excelente! Tu reserva para ${guests} personas el ${new Date(reservationTime).toLocaleDateString('es-AR')} a las ${time} ha sido confirmada. ¡Te esperamos!`);
                 } else {
                     const dateObj = new Date(date + 'T00:00:00');
-                    const alternativeSlots = getAvailability(dateObj, guests)
+                    const alternativeSlots = getAvailability(allTables, dateObj, guests)
                         .filter(slot => slot > time)
                         .slice(0, 3);
 

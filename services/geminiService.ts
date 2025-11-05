@@ -6,8 +6,9 @@ import type { TimeSlot, ChatMessage } from '../types';
 import { MessageSender } from '../types';
 import { getOrdersFromCache, isOrderFinished } from './orderService';
 import { OrderType, ReservationStatus } from '../types';
-// Fix: Import GoogleGenAI for use in transcribeAudio
 import { GoogleGenAI } from "@google/genai";
+
+const ai = new GoogleGenAI({ apiKey: process.env.API_KEY! });
 
 const generateMenuForPrompt = (): string => {
     const products = getProductsFromCache();
@@ -348,16 +349,8 @@ Comienza la conversación saludando amablemente, informando que el local está c
     }
 }
 
-export interface CustomChat {
-    sendMessage: (params: { message: string }) => Promise<{ text: string }>;
-}
-
-export const createChatSession = (history: ChatMessage[] = [], actionLock: 'order' | 'reservation' | null = null): CustomChat => {
-  
-  const sendMessage = async (params: { message: string }): Promise<{ text: string }> => {
-    const fullHistory = [...history, { sender: MessageSender.USER, text: params.message }];
-    
-    const formattedHistory = fullHistory
+export const sendMessageToGemini = async (history: ChatMessage[], actionLock: 'order' | 'reservation' | null = null): Promise<{ text: string }> => {
+    const formattedHistory = history
       .filter(msg => msg.text && !msg.text.match(/```json\s*([\s\S]*?)\s*```/))
       .map(msg => ({
           role: msg.sender === MessageSender.USER ? 'user' : 'model',
@@ -366,30 +359,26 @@ export const createChatSession = (history: ChatMessage[] = [], actionLock: 'orde
 
     const systemInstruction = getSystemInstruction(actionLock);
 
-    const response = await fetch('/.netlify/functions/gemini', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-            history: formattedHistory, 
-            systemInstruction: systemInstruction 
-        }),
-    });
+    try {
+        const response = await ai.models.generateContent({
+            model: 'gemini-2.5-flash',
+            contents: formattedHistory,
+            config: {
+                systemInstruction: systemInstruction,
+            },
+        });
 
-    if (!response.ok) {
-        const errorData = await response.json().catch(() => ({ error: 'Server error' }));
-        throw new Error(errorData.error || 'Failed to get response from assistant.');
+        return { text: response.text };
+    } catch (error) {
+        console.error("Error calling Gemini API:", error);
+        const errorMessage = error instanceof Error ? error.message : 'Failed to get response from assistant.';
+        throw new Error(errorMessage);
     }
-
-    return response.json();
-  };
-
-  return { sendMessage };
 };
 
 
 export const transcribeAudio = async (base64Audio: string, mimeType: string): Promise<string> => {
     try {
-        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY! });
         const audioPart = {
             inlineData: {
                 mimeType: mimeType,

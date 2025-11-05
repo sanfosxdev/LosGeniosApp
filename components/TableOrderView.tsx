@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import type { Order, Table, Product, Category, Promotion, OrderItem } from '../types';
-import { OrderType, CreatedBy, OrderStatus, PaymentMethod } from '../types';
+import type { Order, Table, Product, Category, Promotion, OrderItem } from '../../types';
+import { OrderType, CreatedBy, OrderStatus, PaymentMethod } from '../../types';
 import { getEnrichedTableById, getTablesFromCache, fetchAndCacheTables } from '../services/tableService';
 import { getOrdersFromCache, saveOrder, updateOrder, updateOrderStatus, fetchAndCacheOrders } from '../services/orderService';
 import { getReservationsFromCache, fetchAndCacheReservations } from '../services/reservationService';
@@ -59,7 +59,9 @@ const TableOrderView: React.FC<{ tableId: string }> = ({ tableId }) => {
                 }
                 
                 // Step 4: If no session, check table status
-                const enrichedTable = getEnrichedTableById(tableId);
+                const allOrders = getOrdersFromCache();
+                const allReservations = getReservationsFromCache();
+                const enrichedTable = getEnrichedTableById(tableId, allOrders, allReservations);
                 
                 if (!enrichedTable) {
                     throw new Error('No se pudieron obtener los detalles completos de la mesa.');

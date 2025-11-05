@@ -170,6 +170,7 @@ const TablesPanel: React.FC<TablesPanelProps> = ({ dataTimestamp }) => {
     const [tableToPay, setTableToPay] = useState<EnrichedTable | null>(null);
     const [tableForQr, setTableForQr] = useState<Table | null>(null);
     const [updatingStatusTableId, setUpdatingStatusTableId] = useState<string | null>(null);
+    const [isSavingOrder, setIsSavingOrder] = useState(false);
     
     const isOpen = isBusinessOpen();
 
@@ -241,14 +242,24 @@ const TablesPanel: React.FC<TablesPanelProps> = ({ dataTimestamp }) => {
         });
         fetchDataAndEnrichTables();
     };
-    const handleSaveOrder = (orderData: Omit<Order, 'id' | 'status' | 'createdAt' | 'statusHistory' | 'finishedAt' | 'isPaid' | 'createdBy'> & { id?: string }) => {
-        if(orderData.id){
-            updateOrder(orderData as Partial<Order> & { id: string });
-        } else {
-            saveOrder({ ...orderData, createdBy: CreatedBy.ADMIN });
+    const handleSaveOrder = async (orderData: Omit<Order, 'id' | 'status' | 'createdAt' | 'statusHistory' | 'finishedAt' | 'isPaid' | 'createdBy'> & { id?: string }) => {
+        setIsSavingOrder(true);
+        try {
+            if (orderData.id) {
+                await updateOrder(orderData as Partial<Order> & { id: string });
+                toastService.show('Pedido de mesa actualizado.', 'success');
+            } else {
+                await saveOrder({ ...orderData, createdBy: CreatedBy.ADMIN });
+                toastService.show('Pedido de mesa creado.', 'success');
+            }
+            handleCloseModals();
+            fetchDataAndEnrichTables();
+        } catch (error) {
+            const message = error instanceof Error ? error.message : 'Error al guardar el pedido.';
+            toastService.show(message, 'error');
+        } finally {
+            setIsSavingOrder(false);
         }
-        handleCloseModals();
-        fetchDataAndEnrichTables();
     };
     
     const handleModifyOrder = (order: Order) => {
@@ -339,7 +350,9 @@ const TablesPanel: React.FC<TablesPanelProps> = ({ dataTimestamp }) => {
                 onClose={handleCloseModals} 
                 onSave={handleSaveOrder} 
                 preselectedTableIds={preselectedTableIds}
-                orderToEdit={orderToEdit} 
+                orderToEdit={orderToEdit}
+                isSaving={isSavingOrder} 
+                isStoreOpen={isOpen}
             />
             <TableDetailsModal 
                 isOpen={isDetailsModalOpen}

@@ -9,8 +9,7 @@ import { LayoutGridIcon } from '../icons/LayoutGridIcon';
 import { BotIcon } from '../icons/BotIcon';
 import { SettingsIcon } from '../icons/SettingsIcon';
 import ThemeToggleButton from '../ThemeToggleButton';
-
-type AdminPanel = 'orders' | 'products' | 'customers' | 'schedule' | 'reservations' | 'tables' | 'bots' | 'settings';
+import type { AdminPanel } from '../../types';
 
 interface AdminSidebarProps {
   activePanel: AdminPanel;
@@ -27,6 +26,7 @@ const AdminSidebar: React.FC<AdminSidebarProps> = ({ activePanel, onPanelChange,
         { id: 'tables', label: 'Mesas', icon: <LayoutGridIcon className="w-6 h-6" /> },
         { id: 'products', label: 'Productos', icon: <ShoppingBagIcon className="w-6 h-6" /> },
         { id: 'customers', label: 'Clientes', icon: <UsersIcon className="w-6 h-6" /> },
+        { id: 'users', label: 'Usuarios', icon: <UsersIcon className="w-6 h-6" /> },
         { id: 'schedule', label: 'Horarios', icon: <ClockIcon className="w-6 h-6" /> },
         { id: 'bots', label: 'Bots', icon: <BotIcon className="w-6 h-6" /> },
         { id: 'settings', label: 'Ajustes', icon: <SettingsIcon className="w-6 h-6" /> },

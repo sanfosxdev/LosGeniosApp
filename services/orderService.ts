@@ -95,7 +95,7 @@ export const saveOrder = async (orderData: Omit<Order, 'id' | 'status' | 'create
   
   try {
       await setDoc(doc(db, SHEET_NAME, newOrder.id), cleanUndefined(newOrder));
-      updateCaches([newOrder, ...getOrdersFromCache()]);
+      // Optimistic update removed to let Firebase listener handle it
       return newOrder;
   } catch (e) {
       throw new Error(`Error al guardar pedido en la nube: ${e instanceof Error ? e.message : String(e)}`);
@@ -111,9 +111,7 @@ export const updateOrder = async (orderUpdates: Partial<Order> & { id: string })
     
     try {
         await setDoc(doc(db, SHEET_NAME, updatedOrder.id), cleanUndefined(updatedOrder));
-        const newCache = [...orders];
-        newCache[orderIndex] = updatedOrder;
-        updateCaches(newCache);
+        // Optimistic update removed to let Firebase listener handle it
         return updatedOrder;
     } catch (e) {
         throw new Error(`Error al actualizar pedido en la nube: ${e instanceof Error ? e.message : String(e)}`);
@@ -145,9 +143,7 @@ export const updateOrderStatus = async (orderId: string, status: OrderStatus): P
     
     try {
         await setDoc(doc(db, SHEET_NAME, order.id), cleanUndefined(order));
-        const newCache = [...orders];
-        newCache[orderIndex] = order;
-        updateCaches(newCache);
+        // Optimistic update removed to let Firebase listener handle it
         addNotification({ message: `El pedido #${order.id.split('-')[1]} (${order.customer.name}) cambió a: ${status}.`, type: 'order', relatedId: order.id });
         return order;
     } catch (e) {
@@ -167,9 +163,7 @@ export const markOrderAsPaid = async (orderId: string, paymentMethod: PaymentMet
     
     try {
         await setDoc(doc(db, SHEET_NAME, order.id), cleanUndefined(order));
-        const newCache = [...orders];
-        newCache[orderIndex] = order;
-        updateCaches(newCache);
+        // Optimistic update removed to let Firebase listener handle it
         addNotification({ message: `Se aprobó el pago para el pedido #${orderId.split('-')[1]} de ${order.customer.name}.`, type: 'order', relatedId: orderId });
         return order;
     } catch (e) {
@@ -180,7 +174,7 @@ export const markOrderAsPaid = async (orderId: string, paymentMethod: PaymentMet
 export const deleteOrder = async (orderId: string): Promise<void> => {
     try {
         await deleteDoc(doc(db, SHEET_NAME, orderId));
-        updateCaches(getOrdersFromCache().filter(o => o.id !== orderId));
+        // Optimistic update removed to let Firebase listener handle it
     } catch (e) {
         throw new Error(`Error al eliminar pedido en la nube: ${e instanceof Error ? e.message : String(e)}`);
     }

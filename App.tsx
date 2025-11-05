@@ -1,82 +1,90 @@
 import React, { useState, useEffect } from 'react';
+import AdminDashboard from './components/AdminDashboard';
 import Header from './components/Header';
 import HeroSection from './components/HeroSection';
 import MenuSection from './components/MenuSection';
 import AboutSection from './components/AboutSection';
 import Footer from './components/Footer';
 import ChatAssistantModal from './components/ChatAssistantModal';
-import AdminDashboard from './components/AdminDashboard';
 import FloatingChatButton from './components/FloatingChatButton';
 import TableOrderView from './components/TableOrderView';
-import { getSliceBotStatus, type SliceBotStatus } from './services/sliceBotService';
-import { isBusinessOpen } from './services/scheduleService';
+import { isBusinessOpen, fetchAndCacheSchedule } from './services/scheduleService';
+import { getSliceBotStatus } from './services/sliceBotService';
+import type { SliceBotStatus } from './services/sliceBotService';
 
-type View = 'site' | 'admin';
+type View = 'site' | 'admin' | 'table';
 
 const App: React.FC = () => {
-  const [isChatOpen, setIsChatOpen] = useState(false);
   const [view, setView] = useState<View>('site');
   const [tableId, setTableId] = useState<string | null>(null);
-  const [isSliceBotActive, setIsSliceBotActive] = useState(() => getSliceBotStatus() === 'active');
-  const [isStoreOpen, setIsStoreOpen] = useState(() => isBusinessOpen());
-
-  const handleSliceBotStatusChange = (newStatus: SliceBotStatus) => {
-    setIsSliceBotActive(newStatus === 'active');
-  };
-
-  const openChat = () => {
-    if (isSliceBotActive) {
-      setIsChatOpen(true);
-    }
-  };
-  const closeChat = () => setIsChatOpen(false);
+  const [isChatModalOpen, setIsChatModalOpen] = useState(false);
+  const [isStoreOpen, setIsStoreOpen] = useState(true);
+  const [sliceBotStatus, setSliceBotStatus] = useState<SliceBotStatus>('inactive');
 
   useEffect(() => {
-    const urlParams = new URLSearchParams(window.location.search);
-    const tableIdFromUrl = urlParams.get('tableId');
-    if (tableIdFromUrl) {
-      setTableId(tableIdFromUrl);
+    const checkStatus = async () => {
+      await fetchAndCacheSchedule();
+      setIsStoreOpen(isBusinessOpen());
+      setSliceBotStatus(getSliceBotStatus());
+    };
+    checkStatus();
+
+    const params = new URLSearchParams(window.location.search);
+    const adminParam = params.get('admin');
+    const tableParam = params.get('tableId');
+
+    if (adminParam === 'true') {
+      setView('admin');
+    } else if (tableParam) {
+      setTableId(tableParam);
+      setView('table');
+    } else {
+      setView('site');
     }
-    
-    const handleStorageChange = (event: StorageEvent) => {
-      if (event.key === 'pizzeria-slice-bot-status') {
-        setIsSliceBotActive(getSliceBotStatus() === 'active');
-      }
-    };
-
-    window.addEventListener('storage', handleStorageChange);
-
-    const storeStatusInterval = setInterval(() => {
-        setIsStoreOpen(isBusinessOpen());
-    }, 60000); // Check every minute
-
-    return () => {
-        window.removeEventListener('storage', handleStorageChange);
-        clearInterval(storeStatusInterval);
-    };
   }, []);
-
-  if (tableId) {
-    return <TableOrderView tableId={tableId} />;
-  }
   
-  if (view === 'admin') {
-    return <AdminDashboard onGoToSite={() => setView('site')} onSliceBotStatusChange={handleSliceBotStatusChange} />;
-  }
+  const handleAdminClick = () => {
+    // The history API can cause a SecurityError in some sandboxed environments.
+    // Switching the view via state is a more robust solution.
+    // The URL can be manually changed to ?admin=true to load the admin panel directly.
+    setView('admin');
+  };
 
-  return (
-    <div className="bg-light dark:bg-dark text-dark dark:text-light font-sans antialiased">
-      <Header onOrderClick={openChat} onAdminClick={() => setView('admin')} isBotActive={isSliceBotActive} isStoreOpen={isStoreOpen} />
-      <main>
-        <HeroSection onOrderClick={openChat} isBotActive={isSliceBotActive} isStoreOpen={isStoreOpen} />
-        <MenuSection />
-        <AboutSection />
-      </main>
-      <Footer onAdminClick={() => setView('admin')} />
-      {isSliceBotActive && <ChatAssistantModal isOpen={isChatOpen} onClose={closeChat} />}
-      <FloatingChatButton onClick={openChat} isBotActive={isSliceBotActive} />
-    </div>
-  );
+  const handleGoToSite = () => {
+    // The history API can cause a SecurityError in some sandboxed environments.
+    // For maximum compatibility, we'll just switch the state.
+    setView('site');
+  };
+
+  const handleSliceBotStatusChange = (newStatus: SliceBotStatus) => {
+    setSliceBotStatus(newStatus);
+  };
+
+  const renderView = () => {
+    switch (view) {
+      case 'admin':
+        return <AdminDashboard onGoToSite={handleGoToSite} onSliceBotStatusChange={handleSliceBotStatusChange} />;
+      case 'table':
+        return tableId ? <TableOrderView tableId={tableId} /> : <div>Mesa no especificada.</div>;
+      case 'site':
+      default:
+        return (
+          <>
+            <Header onOrderClick={() => setIsChatModalOpen(true)} onAdminClick={handleAdminClick} isBotActive={sliceBotStatus === 'active'} isStoreOpen={isStoreOpen} />
+            <main>
+              <HeroSection onOrderClick={() => setIsChatModalOpen(true)} isBotActive={sliceBotStatus === 'active'} isStoreOpen={isStoreOpen} />
+              <MenuSection />
+              <AboutSection />
+            </main>
+            <Footer onAdminClick={handleAdminClick} />
+            <FloatingChatButton onClick={() => setIsChatModalOpen(true)} isBotActive={sliceBotStatus === 'active'} />
+            <ChatAssistantModal isOpen={isChatModalOpen} onClose={() => setIsChatModalOpen(false)} />
+          </>
+        );
+    }
+  };
+
+  return <div className="bg-light dark:bg-dark">{renderView()}</div>;
 };
 
 export default App;

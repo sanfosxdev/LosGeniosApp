@@ -3,6 +3,7 @@ import type { Reservation, Customer } from '../../types';
 import { ReservationStatus, CreatedBy } from '../../types';
 import { getCustomersFromCache } from '../../services/customerService';
 import { getAvailability, findAvailableTables } from '../../services/reservationService';
+import { getTablesFromCache } from '../../services/tableService';
 import { CloseIcon } from '../icons/CloseIcon';
 
 interface AddReservationModalProps {
@@ -68,7 +69,8 @@ const AddReservationModal: React.FC<AddReservationModalProps> = ({ isOpen, onClo
         setSelectedTime('');
         const timer = setTimeout(() => {
             const dateObj = new Date(selectedDate + 'T00:00:00');
-            const slots = getAvailability(dateObj, guests);
+            const allTables = getTablesFromCache();
+            const slots = getAvailability(allTables, dateObj, guests);
             setAvailableSlots(slots);
             setIsLoadingSlots(false);
         }, 50);
@@ -107,12 +109,13 @@ const AddReservationModal: React.FC<AddReservationModalProps> = ({ isOpen, onClo
     }
     
     const finalReservationTime = new Date(`${selectedDate}T${selectedTime}`);
-    const availableTableIds = findAvailableTables(finalReservationTime, guests, reservationToEdit?.id);
+    const allTables = getTablesFromCache();
+    const availableTableIds = findAvailableTables(allTables, finalReservationTime, guests, reservationToEdit?.id);
 
     if (!availableTableIds) {
         setSubmissionError('Este turno ya no está disponible. Por favor, seleccione otro.');
         const dateObj = new Date(selectedDate + 'T00:00:00');
-        setAvailableSlots(getAvailability(dateObj, guests));
+        setAvailableSlots(getAvailability(allTables, dateObj, guests));
         setSelectedTime('');
         return;
     }

@@ -189,6 +189,21 @@ export interface CustomerCategory {
   color: string;
 }
 
+// USERS (Admin Panel)
+export enum UserRole {
+    ADMIN = 'Administrador',
+    EDITOR = 'Editor',
+}
+
+export interface User {
+    id: string;
+    name: string;
+    email: string;
+    role: UserRole;
+    createdAt: string;
+    lastAccess: string | null;
+}
+
 
 // SCHEDULE
 export interface TimeSlot {
@@ -275,3 +290,6 @@ export interface Notification {
     createdAt: string;
     isRead: boolean;
 }
+
+// ADMIN
+export type AdminPanel = 'orders' | 'products' | 'customers' | 'users' | 'schedule' | 'reservations' | 'tables' | 'bots' | 'settings';

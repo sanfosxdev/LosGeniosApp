@@ -160,3 +160,16 @@ export const getMetrics = (): SliceBotMetrics => {
 export const getChatHistory = (): ChatHistorySession[] => {
     return getStoredData().chatHistory;
 };
+
+export const updateMetricsCache = (metrics: SliceBotMetrics) => {
+    const data = getStoredData();
+    data.metrics = metrics;
+    localStorage.setItem(METRICS_STORAGE_KEY, JSON.stringify(data));
+};
+
+export const updateChatHistoryCache = (chatHistory: ChatHistorySession[]) => {
+    const data = getStoredData();
+    // Sort descending by start time
+    data.chatHistory = chatHistory.sort((a, b) => new Date(b.startTime).getTime() - new Date(a.startTime).getTime());
+    localStorage.setItem(METRICS_STORAGE_KEY, JSON.stringify(data));
+};

@@ -114,7 +114,6 @@ export const addProduct = async (productData: Omit<Product, 'id'>): Promise<Prod
     };
     try {
         await setDoc(doc(db, SHEET_NAME, newProduct.id), newProduct);
-        updateCaches([...getProductsFromCache(), newProduct]);
         return newProduct;
     } catch(e) {
         throw new Error(`Error al guardar producto en la nube: ${e instanceof Error ? e.message : String(e)}`);
@@ -124,13 +123,6 @@ export const addProduct = async (productData: Omit<Product, 'id'>): Promise<Prod
 export const updateProduct = async (updatedProduct: Product): Promise<Product> => {
     try {
         await setDoc(doc(db, SHEET_NAME, updatedProduct.id), updatedProduct);
-        const currentCache = getProductsFromCache();
-        const productIndex = currentCache.findIndex(p => p.id === updatedProduct.id);
-        if (productIndex !== -1) {
-            const newCache = [...currentCache];
-            newCache[productIndex] = updatedProduct;
-            updateCaches(newCache);
-        }
         return updatedProduct;
     } catch (e) {
         throw new Error(`Error al actualizar producto en la nube: ${e instanceof Error ? e.message : String(e)}`);
@@ -140,7 +132,6 @@ export const updateProduct = async (updatedProduct: Product): Promise<Product> =
 export const deleteProduct = async (productId: string): Promise<void> => {
     try {
         await deleteDoc(doc(db, SHEET_NAME, productId));
-        updateCaches(getProductsFromCache().filter(p => p.id !== productId));
     } catch (e) {
         throw new Error(`Error al eliminar producto en la nube: ${e instanceof Error ? e.message : String(e)}`);
     }

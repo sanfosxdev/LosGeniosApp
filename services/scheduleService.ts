@@ -9,7 +9,8 @@ const SCHEDULE_DOC_ID = 'main';
 
 let scheduleCache: Schedule | null = null;
 
-const updateCaches = (schedule: Schedule) => {
+// Fix: Export the updateCaches function so it can be imported in AdminDashboard.tsx.
+export const updateCaches = (schedule: Schedule) => {
     scheduleCache = schedule;
     localStorage.setItem(SCHEDULE_STORAGE_KEY, JSON.stringify(schedule));
 }
