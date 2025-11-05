@@ -5,7 +5,7 @@ import { TrashIcon } from '../icons/TrashIcon';
 
 const SettingsPanel: React.FC = () => {
     
-    const firebaseProjectId = process.env.VITE_FIREBASE_PROJECT_ID;
+    const firebaseProjectId = import.meta.env.VITE_FIREBASE_APP_ID;
 
     const handleClearLocalData = () => {
         if (window.confirm('¿Estás seguro de que quieres borrar todos los datos locales? Esto cerrará tu sesión en el panel y forzará una recarga completa de los datos desde Firebase. No se borrarán datos de la base de datos.')) {
