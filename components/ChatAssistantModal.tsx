@@ -8,7 +8,7 @@ import { MicrophoneIcon } from './icons/MicrophoneIcon';
 import { UploadCloudIcon } from './icons/UploadCloudIcon';
 import type { ChatMessage } from '../types';
 import { MessageSender, CreatedBy } from '../types';
-import { sendMessageToGemini, transcribeAudio } from '../services/geminiService';
+import { sendMessageToGemini, transcribeAudio } from '../services/assistantService';
 import { saveOrder } from '../services/orderService';
 import { addReservation, findAvailableTables, getAvailability } from '../services/reservationService';
 import { isBusinessOpen } from '../services/scheduleService';
