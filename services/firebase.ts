@@ -23,9 +23,10 @@ import {
 // Your web app's Firebase configuration should be in environment variables
 // (e.g., a .env file if you are using a bundler like Vite)
 // Example: VITE_FIREBASE_API_KEY="AIza..."
+// FIX: Use process.env instead of import.meta.env to access environment variables.
+// This resolves the TypeScript error `Property 'env' does not exist on type 'ImportMeta'`
+// and aligns with the environment variable access pattern used in other parts of the application.
 const firebaseConfig = {
- // FIX: Changed import.meta.env to process.env to resolve TypeScript errors with 'ImportMeta'.
- // Vite can be configured to handle process.env.
  apiKey: process.env.VITE_FIREBASE_API_KEY,
   authDomain: process.env.VITE_FIREBASE_AUTH_DOMAIN,
   projectId: process.env.VITE_FIREBASE_PROJECT_ID,

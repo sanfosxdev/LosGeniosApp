@@ -1,6 +1,6 @@
 import type { SliceBotMetrics, ChatHistorySession, ChatMessage } from '../types';
 // Fix: Import 'getDoc' from firebase to fix 'Cannot find name' error.
-import { db, collection, getDocs, doc, setDoc, writeBatch, query, orderBy, limit, getDoc } from 'firebase/firestore';
+import { db, collection, getDocs, doc, setDoc, writeBatch, query, orderBy, limit, getDoc } from './firebase';
 
 const METRICS_STORAGE_KEY = 'pizzeria-slice-bot-metrics';
 const MAX_HISTORY_SESSIONS = 100;
