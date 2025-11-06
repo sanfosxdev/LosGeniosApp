@@ -1,15 +1,13 @@
-
 import React, { useState, useEffect, useRef } from 'react';
 import { BotIcon } from '../icons/BotIcon';
 import { WhatsAppIcon } from '../icons/WhatsAppIcon';
 import * as whatsAppBotService from '../../services/whatsappBotService';
 import * as sliceBotService from '../../services/sliceBotService';
 import WhatsAppQRCodeModal from './WhatsAppQRCodeModal';
-import type { WhatsAppBotStatus, WhatsAppBotMetrics } from '../../types';
+import type { WhatsAppBotStatus } from '../../types';
 import type { SliceBotStatus } from '../../services/sliceBotService';
 import type { SliceBotMetrics, ChatHistorySession } from '../../types';
 import * as sliceBotMetricsService from '../../services/sliceBotMetricsService';
-import * as whatsAppBotMetricsService from '../../services/whatsappBotMetricsService';
 import { RefreshIcon } from '../icons/RefreshIcon';
 import UptimeTimer from './UptimeTimer';
 import { TelegramIcon } from '../icons/TelegramIcon';
@@ -25,7 +23,6 @@ import { HistoryIcon } from '../icons/HistoryIcon';
 import { ChevronDownIcon } from '../icons/ChevronDownIcon';
 import { ChevronUpIcon } from '../icons/ChevronUpIcon';
 import { UserIcon } from '../icons/UserIcon';
-import ChatHistoryModal from './ChatHistoryModal';
 
 
 interface BotsPanelProps {
@@ -54,17 +51,10 @@ const BotsPanel: React.FC<BotsPanelProps> = ({ status, setStatus, checkStatus, l
     // Details State
     const [sliceMetrics, setSliceMetrics] = useState<SliceBotMetrics | null>(null);
     const [sliceChatHistory, setSliceChatHistory] = useState<ChatHistorySession[]>([]);
-    const [whatsAppMetrics, setWhatsAppMetrics] = useState<WhatsAppBotMetrics | null>(null);
-    const [whatsAppChatHistory, setWhatsAppChatHistory] = useState<ChatHistorySession[]>([]);
     const [expandedSessionId, setExpandedSessionId] = useState<string | null>(null);
 
     // View State
-    const [view, setView] = useState<'grid' | 'details'>('grid');
-    const [selectedBot, setSelectedBot] = useState<'slice' | 'whatsapp' | null>(null);
-
-    // Modal State for WhatsApp Chat History
-    const [isChatHistoryModalOpen, setIsChatHistoryModalOpen] = useState(false);
-    const [selectedChatSession, setSelectedChatSession] = useState<ChatHistorySession | null>(null);
+    const [isDetailsVisible, setIsDetailsVisible] = useState(false);
 
     const isBusy = status === 'initiating' || status === 'scanning' || status === 'disconnecting';
 
@@ -100,16 +90,11 @@ const BotsPanel: React.FC<BotsPanelProps> = ({ status, setStatus, checkStatus, l
     }, [status]);
     
     useEffect(() => {
-        if (view === 'details') {
-            if (selectedBot === 'slice') {
-                setSliceMetrics(sliceBotMetricsService.getMetrics());
-                setSliceChatHistory(sliceBotMetricsService.getChatHistory());
-            } else if (selectedBot === 'whatsapp') {
-                setWhatsAppMetrics(whatsAppBotMetricsService.getMetrics());
-                setWhatsAppChatHistory(whatsAppBotMetricsService.getChatHistory());
-            }
+        if (isDetailsVisible) {
+            setSliceMetrics(sliceBotMetricsService.getMetrics());
+            setSliceChatHistory(sliceBotMetricsService.getChatHistory());
         }
-    }, [view, selectedBot]);
+    }, [isDetailsVisible]);
 
     useEffect(() => {
         if (isQrModalOpen && (status === 'ready_to_scan' || status === 'scanning')) {
@@ -226,16 +211,6 @@ const BotsPanel: React.FC<BotsPanelProps> = ({ status, setStatus, checkStatus, l
         setSliceStatus(newStatus);
         onSliceBotStatusChange(newStatus);
         refreshSliceStatus();
-    };
-    
-    const handleViewChatHistory = (session: ChatHistorySession) => {
-        setSelectedChatSession(session);
-        setIsChatHistoryModalOpen(true);
-    };
-
-    const handleCloseChatHistoryModal = () => {
-        setIsChatHistoryModalOpen(false);
-        setSelectedChatSession(null);
     };
 
     const renderSpinner = (text: string) => (
@@ -385,59 +360,6 @@ const BotsPanel: React.FC<BotsPanelProps> = ({ status, setStatus, checkStatus, l
         );
     };
 
-    const renderWhatsAppDetails = () => {
-        if (!whatsAppMetrics) return <p>Cargando métricas...</p>;
-
-        const metricCards = [
-            { label: 'Clientes Atendidos', value: whatsAppMetrics.distinctCustomers.toLocaleString(), icon: <UsersIcon className="w-8 h-8 text-blue-500" /> },
-            { label: 'Mensajes Totales', value: whatsAppMetrics.totalMessages.toLocaleString(), icon: <MessageSquareIcon className="w-8 h-8 text-teal-500" /> },
-            { label: 'Pedidos Realizados', value: whatsAppMetrics.ordersMade.toLocaleString(), icon: <PackageIcon className="w-8 h-8 text-green-500" /> },
-            { label: 'Reservas Realizadas', value: whatsAppMetrics.reservationsMade.toLocaleString(), icon: <CalendarIcon className="w-8 h-8 text-purple-500" /> },
-        ];
-
-        return (
-            <div className="space-y-6">
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                    {metricCards.map(card => (
-                        <div key={card.label} className="bg-gray-50 dark:bg-gray-700/50 p-4 rounded-lg text-center shadow">
-                            <div className="flex justify-center items-center mb-2">{card.icon}</div>
-                            <p className="text-2xl font-bold text-gray-800 dark:text-gray-100">{card.value}</p>
-                            <p className="text-sm text-gray-500 dark:text-gray-400">{card.label}</p>
-                        </div>
-                    ))}
-                </div>
-
-                <div>
-                    <h3 className="text-xl font-semibold text-gray-800 dark:text-gray-100 mb-4 flex items-center gap-2">
-                        <HistoryIcon className="w-6 h-6"/>
-                        Historial de Clientes Atendidos
-                    </h3>
-                    <div className="space-y-2 max-h-[60vh] overflow-y-auto pr-2">
-                        {whatsAppChatHistory.length === 0 ? (
-                            <p className="text-gray-500 dark:text-gray-400">No hay historial de chats todavía.</p>
-                        ) : (
-                            whatsAppChatHistory.map(session => (
-                                <div key={session.id} className="bg-gray-50 dark:bg-gray-700/50 rounded-lg">
-                                    <button onClick={() => handleViewChatHistory(session)} className="w-full p-3 flex justify-between items-center text-left hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors">
-                                        <div className="flex-1">
-                                            <p className="font-semibold text-gray-700 dark:text-gray-200">
-                                                Cliente: {session.id}
-                                            </p>
-                                            <p className="text-xs text-gray-500 dark:text-gray-400">
-                                                Resultado: {session.outcome || 'Inconcluso'} | Mensajes: {session.messages.length} | Últ. Act: {new Date(session.lastActivity).toLocaleString('es-AR')}
-                                            </p>
-                                        </div>
-                                        <ChevronDownIcon className="w-5 h-5 text-gray-400"/>
-                                    </button>
-                                </div>
-                            ))
-                        )}
-                    </div>
-                </div>
-            </div>
-        );
-    };
-
 
   return (
     <div>
@@ -445,7 +367,7 @@ const BotsPanel: React.FC<BotsPanelProps> = ({ status, setStatus, checkStatus, l
         <h2 className="text-3xl font-bold text-gray-800 dark:text-gray-100">Configuración de Bots</h2>
       </div>
 
-      {view === 'grid' ? (
+      {!isDetailsVisible ? (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6 animate-fade-in">
           {/* Card for Web Assistant */}
           <div className="bg-white dark:bg-gray-800 shadow-md rounded-lg p-6 flex flex-col gap-4 transition-all duration-300 ease-in-out hover:shadow-2xl hover:ring-2 hover:ring-primary/50">
@@ -487,7 +409,7 @@ const BotsPanel: React.FC<BotsPanelProps> = ({ status, setStatus, checkStatus, l
                    <button onClick={handleToggleSliceBot} className={`${sliceStatus === 'active' ? 'bg-gray-500 hover:bg-gray-600' : 'bg-primary hover:bg-red-700'} text-white font-bold py-2 px-4 rounded-lg transition-colors flex-1`}>
                       {sliceStatus === 'active' ? 'Desconectar' : 'Conectar'}
                   </button>
-                  <button onClick={() => { setView('details'); setSelectedBot('slice'); }} className="bg-blue-600 text-white font-bold py-2 px-4 rounded-lg hover:bg-blue-700 transition-colors flex-1">
+                  <button onClick={() => setIsDetailsVisible(true)} className="bg-blue-600 text-white font-bold py-2 px-4 rounded-lg hover:bg-blue-700 transition-colors flex-1">
                       Ver Detalles
                   </button>
               </div>
@@ -508,9 +430,6 @@ const BotsPanel: React.FC<BotsPanelProps> = ({ status, setStatus, checkStatus, l
                    <div className="flex-1 flex justify-center items-center">
                         {renderStatusAndActions()}
                    </div>
-                   <button onClick={() => { setView('details'); setSelectedBot('whatsapp'); }} className="bg-blue-600 text-white font-bold py-2 px-4 rounded-lg hover:bg-blue-700 transition-colors flex-1">
-                      Ver Detalles
-                  </button>
               </div>
           </div>
           
@@ -589,27 +508,21 @@ const BotsPanel: React.FC<BotsPanelProps> = ({ status, setStatus, checkStatus, l
       ) : (
         <div className="bg-white dark:bg-gray-800 shadow-md rounded-lg p-6 relative animate-fade-in">
             <button 
-                onClick={() => { setView('grid'); setSelectedBot(null); }}
+                onClick={() => setIsDetailsVisible(false)}
                 className="absolute top-4 right-4 p-2 rounded-full text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700"
                 aria-label="Cerrar vista de detalles"
             >
                 <CloseIcon className="w-6 h-6" />
             </button>
             <h2 className="text-2xl font-bold text-gray-800 dark:text-gray-100 mb-4">
-                Detalles del Asistente {selectedBot === 'slice' ? '"Slice"' : 'de WhatsApp'}
+                Detalles del Asistente "Slice"
             </h2>
              <div className="text-gray-600 dark:text-gray-300 min-h-[50vh] flex flex-col justify-start border-t dark:border-gray-700 mt-4 pt-4">
-                {selectedBot === 'slice' && renderSliceDetails()}
-                {selectedBot === 'whatsapp' && renderWhatsAppDetails()}
+                {renderSliceDetails()}
             </div>
         </div>
       )}
       <WhatsAppQRCodeModal isOpen={isQrModalOpen} onClose={handleCloseQrModal} qrCodeUrl={qrCodeUrl} />
-      <ChatHistoryModal
-          isOpen={isChatHistoryModalOpen}
-          onClose={handleCloseChatHistoryModal}
-          session={selectedChatSession}
-      />
     </div>
   );
 };

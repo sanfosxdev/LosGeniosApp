@@ -248,6 +248,14 @@ export interface ChatMessage {
 
 export type WhatsAppBotStatus = 'disconnected' | 'initiating' | 'ready_to_scan' | 'scanning' | 'active' | 'error' | 'disconnecting';
 
+// Fix: Added missing WhatsAppBotMetrics interface.
+export interface WhatsAppBotMetrics {
+    distinctCustomers: number;
+    totalMessages: number;
+    ordersMade: number;
+    reservationsMade: number;
+}
+
 export interface BulkSendJob {
   status: 'running' | 'completed' | 'cancelled' | 'error' | 'idle';
   total: number;
@@ -261,13 +269,6 @@ export interface SliceBotMetrics {
     distinctCustomers: number;
     totalMessages: number;
     totalTokensUsed: number;
-    ordersMade: number;
-    reservationsMade: number;
-}
-
-export interface WhatsAppBotMetrics {
-    distinctCustomers: number;
-    totalMessages: number;
     ordersMade: number;
     reservationsMade: number;
 }
